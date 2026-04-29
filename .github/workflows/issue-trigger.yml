@@ -2,7 +2,7 @@ name: Issue Triggered GenAI Workflow
 
 on:
   issues:
-    types: [opened]
+    types: [opened, edited]
 
 permissions:
   contents: write
@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   run-agent-workflow:
-    if: contains(github.event.issue.labels.*.name, 'agent-request')
+    if: startsWith(github.event.issue.title, '[agent-run]')
     runs-on: ubuntu-latest
 
     steps:
