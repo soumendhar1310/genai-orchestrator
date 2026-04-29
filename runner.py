@@ -76,7 +76,8 @@ def ensure_sample_project_supported(config: dict) -> None:
 
 
 def seed_sample_project_assets(repo_dir: Path) -> None:
-    source_root = Path(__file__).resolve().parent.parent / "sample-project"
+    source_root = Path.cwd() / "sample-project"
+    print(f"Using sample-project baseline from: {source_root}")
 
     for relative_path in [
         Path("BankingSystem.Tests/BankingSystem.Tests.csproj"),
