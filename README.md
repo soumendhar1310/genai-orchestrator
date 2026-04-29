@@ -65,6 +65,58 @@ Recommended scopes for a fine-grained token:
 - issues: read/write
 - metadata: read
 
+### 5a. How to create `GH_PAT` on GitHub
+Use a fine-grained personal access token.
+
+Steps:
+1. In GitHub, go to:
+   - Profile picture
+   - `Settings`
+   - `Developer settings`
+   - `Personal access tokens`
+   - `Fine-grained tokens`
+   - `Generate new token`
+
+2. Give the token a name, for example:
+   - `genai-orchestrator-cross-repo`
+
+3. Choose an expiration such as:
+   - 30 days
+   - 90 days
+
+4. Under **Resource owner**, select:
+   - `soumendhar1310`
+
+5. Under **Repository access**, choose:
+   - `Only select repositories`
+
+6. Select the target repository:
+   - `sample-project`
+
+7. Set repository permissions:
+   - `Contents` -> `Read and write`
+   - `Pull requests` -> `Read and write`
+   - `Metadata` -> `Read-only`
+
+8. Click **Generate token**
+
+9. Copy the token immediately because GitHub will not show it again.
+
+10. Add it to the `genai-orchestrator` repository as an Actions secret:
+    - Go to `genai-orchestrator`
+    - `Settings`
+    - `Secrets and variables`
+    - `Actions`
+    - `New repository secret`
+
+11. Create the secret:
+    - Name: `GH_PAT`
+    - Value: paste the generated token
+
+Important:
+- The token must have access to `sample-project`, because that is the repository the workflow will push to and where it will create Pull Requests.
+- If `GH_PAT` is missing, branch push and PR creation will fail.
+
 ### 6. Open a new issue
 Go to:
 - Issues -> New issue

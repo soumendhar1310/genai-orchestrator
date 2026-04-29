@@ -101,9 +101,15 @@ def run_placeholder_workflow(repo_dir: Path, config: dict) -> None:
 
 
 def commit_and_push_changes(repo_dir: Path, branch_name: str, issue_number: str) -> None:
-    gh_pat = os.getenv("GH_PAT", "")
-    if not gh_pat:
-        raise RuntimeError("GH_PAT is required for cross-repository push operations")
+    gh_pat = os.getenv("GH_PAT", "").strip()
+    github_token = os.getenv("GITHUB_TOKEN", "").strip()
+    token = gh_pat or github_token
+
+    if not token:
+        raise RuntimeError("GH_PAT or GITHUB_TOKEN is required for push operations")
+
+    print(f"GH_PAT present: {'yes' if bool(gh_pat) else 'no'}")
+    print(f"GITHUB_TOKEN present: {'yes' if bool(github_token) else 'no'}")
 
     remote_url_result = subprocess.run(
         "git remote get-url origin",
@@ -114,17 +120,26 @@ def commit_and_push_changes(repo_dir: Path, branch_name: str, issue_number: str)
         cwd=str(repo_dir)
     )
     remote_url = remote_url_result.stdout.strip()
+    print(f"Original remote URL: {remote_url}")
+
     if remote_url.startswith("https://github.com/"):
-        authed_remote_url = remote_url.replace("https://", f"https://x-access-token:{gh_pat}@")
+        authed_remote_url = remote_url.replace("https://", f"https://x-access-token:{token}@")
         run_command(f"git remote set-url origin {authed_remote_url}", cwd=str(repo_dir))
 
     run_command('git config user.name "github-actions[bot]"', cwd=str(repo_dir))
     run_command('git config user.email "41898282+github-actions[bot]@users.noreply.github.com"', cwd=str(repo_dir))
     run_command("git add .", cwd=str(repo_dir))
-    run_command(
+    run_command("git status --short", cwd=str(repo_dir))
+
+    commit_result = subprocess.run(
         f'git commit -m "Add agent workflow summary for issue #{issue_number or "local-run"}"',
+        shell=True,
         cwd=str(repo_dir)
     )
+    if commit_result.returncode != 0:
+        print("No commit created. Continuing without push.")
+        return
+
     run_command(f"git push origin {branch_name}", cwd=str(repo_dir))
 
 

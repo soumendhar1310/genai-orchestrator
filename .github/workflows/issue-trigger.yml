@@ -38,6 +38,7 @@ jobs:
       - name: Run parameterized Agents workflow
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_PAT: ${{ secrets.GH_PAT }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           ISSUE_URL: ${{ github.event.issue.html_url }}
