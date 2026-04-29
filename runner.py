@@ -36,7 +36,13 @@ def clone_repository(config: dict, workspace: Path) -> Path:
     repo_dir = workspace / "target-repo"
     if repo_dir.exists():
         run_command(f"rm -rf {repo_dir}")
-    run_command(f"git clone --branch {config['branch']} {config['repository_url']} {repo_dir}")
+
+    repository_url = config["repository_url"]
+    gh_pat = os.getenv("GH_PAT", "")
+    if gh_pat and repository_url.startswith("https://github.com/"):
+        repository_url = repository_url.replace("https://", f"https://x-access-token:{gh_pat}@")
+
+    run_command(f"git clone --branch {config['branch']} {repository_url} {repo_dir}")
     return repo_dir
 
 
@@ -95,6 +101,23 @@ def run_placeholder_workflow(repo_dir: Path, config: dict) -> None:
 
 
 def commit_and_push_changes(repo_dir: Path, branch_name: str, issue_number: str) -> None:
+    gh_pat = os.getenv("GH_PAT", "")
+    if not gh_pat:
+        raise RuntimeError("GH_PAT is required for cross-repository push operations")
+
+    remote_url_result = subprocess.run(
+        "git remote get-url origin",
+        shell=True,
+        check=True,
+        capture_output=True,
+        text=True,
+        cwd=str(repo_dir)
+    )
+    remote_url = remote_url_result.stdout.strip()
+    if remote_url.startswith("https://github.com/"):
+        authed_remote_url = remote_url.replace("https://", f"https://x-access-token:{gh_pat}@")
+        run_command(f"git remote set-url origin {authed_remote_url}", cwd=str(repo_dir))
+
     run_command('git config user.name "github-actions[bot]"', cwd=str(repo_dir))
     run_command('git config user.email "41898282+github-actions[bot]@users.noreply.github.com"', cwd=str(repo_dir))
     run_command("git add .", cwd=str(repo_dir))
@@ -106,9 +129,9 @@ def commit_and_push_changes(repo_dir: Path, branch_name: str, issue_number: str)
 
 
 def create_pull_request(config: dict, branch_name: str) -> str:
-    token = os.getenv("GITHUB_TOKEN", "")
+    token = os.getenv("GH_PAT", "") or os.getenv("GITHUB_TOKEN", "")
     if not token:
-        raise RuntimeError("GITHUB_TOKEN is required to create a pull request")
+        raise RuntimeError("GH_PAT or GITHUB_TOKEN is required to create a pull request")
 
     issue_number = config.get("issue_number", "") or "local-run"
     repository_url = config["repository_url"]
