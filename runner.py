@@ -32,6 +32,23 @@ def run_command(command: str, cwd: str | None = None) -> None:
     subprocess.run(command, shell=True, check=True, cwd=cwd)
 
 
+def run_command_capture(command: str, cwd: str | None = None) -> subprocess.CompletedProcess:
+    print(f"RUN: {command}")
+    result = subprocess.run(
+        command,
+        shell=True,
+        check=False,
+        cwd=cwd,
+        capture_output=True,
+        text=True
+    )
+    if result.stdout:
+        print(result.stdout)
+    if result.stderr:
+        print(result.stderr)
+    return result
+
+
 def clone_repository(config: dict, workspace: Path) -> Path:
     repo_dir = workspace / "target-repo"
     if repo_dir.exists():
@@ -140,7 +157,13 @@ def commit_and_push_changes(repo_dir: Path, branch_name: str, issue_number: str)
         print("No commit created. Continuing without push.")
         return
 
-    run_command(f"git push origin {branch_name}", cwd=str(repo_dir))
+    push_result = run_command_capture(f"git push origin {branch_name}", cwd=str(repo_dir))
+    if push_result.returncode != 0:
+        raise RuntimeError(
+            "git push failed. Verify that GH_PAT is a fine-grained token with "
+            "Contents: Read and write access to sample-project, and that the token "
+            "owner has permission to push branches to the repository."
+        )
 
 
 def create_pull_request(config: dict, branch_name: str) -> str:
