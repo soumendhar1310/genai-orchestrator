@@ -197,7 +197,7 @@ def build_heuristic_usings(class_info: CSharpClassInfo) -> list[str]:
         f"using {class_info.namespace};",
     }
 
-    if class_info.kind == "controller":
+    if class_info.kind in {"controller", "service", "general"}:
         return sorted(using_lines)
 
     namespace_root = ".".join(class_info.namespace.split(".")[:2]) if "." in class_info.namespace else class_info.namespace
@@ -243,7 +243,7 @@ def generate_heuristic_test_file_content(class_info: CSharpClassInfo) -> str:
     setup_lines: list[str] = []
     constructor_args: list[str] = []
 
-    if class_info.kind == "controller":
+    if class_info.kind in {"controller", "service", "general"}:
         constructor_args = ["null!" for _ in class_info.constructor_dependencies]
         if constructor_args:
             setup_lines.append(f"        _sut = new {class_info.name}({', '.join(constructor_args)});")
@@ -254,7 +254,7 @@ def generate_heuristic_test_file_content(class_info: CSharpClassInfo) -> str:
             "\n".join(
                 [
                     "    [Test]",
-                    "    public void Controller_GeneratedSmokeTest()",
+                    f"    public void {class_info.kind.capitalize()}_GeneratedSmokeTest()",
                     "    {",
                     "        Assert.That(_sut, Is.Not.Null);",
                     "    }",
