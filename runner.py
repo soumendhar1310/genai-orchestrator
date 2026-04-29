@@ -91,6 +91,36 @@ def inventory_csharp_classes(repo_dir: Path) -> list[CSharpClassInfo]:
     return class_inventory
 
 
+def inventory_csharp_enums(repo_dir: Path) -> dict[str, set[str]]:
+    enum_inventory: dict[str, set[str]] = {}
+
+    for file_path in repo_dir.rglob("*.cs"):
+        normalized_path = str(file_path).replace("\\", "/")
+        if any(segment in normalized_path for segment in ["/bin/", "/obj/", ".Tests/"]):
+            continue
+
+        source = file_path.read_text(encoding="utf-8")
+        for enum_match in re.finditer(r"public\s+enum\s+(\w+)\s*\{(.*?)\}", source, re.DOTALL):
+            enum_name = enum_match.group(1)
+            enum_body = enum_match.group(2)
+            members: set[str] = set()
+            for raw_member in enum_body.split(","):
+                candidate = raw_member.strip()
+                if not candidate:
+                    continue
+                candidate = re.sub(r"//.*", "", candidate).strip()
+                candidate = re.sub(r"/\*.*?\*/", "", candidate, flags=re.DOTALL).strip()
+                if not candidate:
+                    continue
+                member_match = re.match(r"(\w+)", candidate)
+                if member_match:
+                    members.add(member_match.group(1))
+            if members:
+                enum_inventory[enum_name] = members
+
+    return enum_inventory
+
+
 def sanitize_dependency_type(dependency_type: str) -> str:
     return dependency_type.replace("?", "").strip()
 
@@ -310,6 +340,19 @@ def is_safe_generated_test_content(class_info: CSharpClassInfo, generated_conten
     return True
 
 
+def has_invalid_enum_references(generated_content: str, enum_inventory: dict[str, set[str]]) -> bool:
+    enum_references = re.findall(r"\b([A-Z]\w*)\.(\w+)\b", generated_content)
+
+    for enum_name, enum_member in enum_references:
+        if enum_name not in enum_inventory:
+            continue
+        if enum_member not in enum_inventory[enum_name]:
+            print(f"Rejected generated test due to invalid enum reference: {enum_name}.{enum_member}")
+            return True
+
+    return False
+
+
 def generate_openai_test_file_content(class_info: CSharpClassInfo) -> str | None:
     client = get_openai_client()
     if client is None:
@@ -370,7 +413,12 @@ Source:
         return None
 
 
-def generate_tests_for_inventory(test_project_path: Path, class_inventory: list[CSharpClassInfo], attempt: int) -> None:
+def generate_tests_for_inventory(
+    test_project_path: Path,
+    class_inventory: list[CSharpClassInfo],
+    enum_inventory: dict[str, set[str]],
+    attempt: int
+) -> None:
     generated_dir = test_project_path.parent / "Generated"
     generated_dir.mkdir(parents=True, exist_ok=True)
 
@@ -396,6 +444,9 @@ def generate_tests_for_inventory(test_project_path: Path, class_inventory: list[
 
         if openai_enabled and class_info.kind in allow_openai_kinds:
             generated_content = generate_openai_test_file_content(class_info)
+
+        if generated_content and has_invalid_enum_references(generated_content, enum_inventory):
+            generated_content = None
 
         if not generated_content:
             generated_content = generate_heuristic_test_file_content(class_info)
@@ -604,7 +655,9 @@ def run_generic_dotnet_workflow(repo_dir: Path, config: dict) -> None:
 
     repo_info = discover_dotnet_repo(repo_dir)
     class_inventory = inventory_csharp_classes(repo_dir)
+    enum_inventory = inventory_csharp_enums(repo_dir)
     print(f"Discovered {len(class_inventory)} public classes for candidate test generation")
+    print(f"Discovered {len(enum_inventory)} enums for generated test validation")
     solution_path = repo_info["solution_path"]
     test_project_path = ensure_nunit_test_project(repo_dir, repo_info)
     coverage_rel_path = f"{test_project_path.parent.name}/TestResults/coverage.opencover.xml"
@@ -615,7 +668,7 @@ def run_generic_dotnet_workflow(repo_dir: Path, config: dict) -> None:
     last_coverage_percent = 0.0
     for attempt in range(1, 4):
         print(f"Starting generation/coverage attempt {attempt} of 3")
-        generate_tests_for_inventory(test_project_path, class_inventory, attempt)
+        generate_tests_for_inventory(test_project_path, class_inventory, enum_inventory, attempt)
 
         build_result = run_command_capture(f'dotnet build "{solution_path}" --no-restore', cwd=str(repo_dir))
         if build_result.returncode != 0:
