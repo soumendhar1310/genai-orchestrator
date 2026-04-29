@@ -435,7 +435,7 @@ def generate_tests_for_inventory(
     print(f"Attempt {attempt}: generating tests for {len(selected_classes)} classes across supported heuristic kinds")
 
     openai_enabled = bool(get_openai_client())
-    allow_openai_kinds = {"repository"} if attempt == 1 else {"repository", "controller"} if attempt == 2 else {"repository", "controller", "service"}
+    allow_openai_kinds = {"repository"} if attempt in {1, 2, 3} else {"repository"}
     print(f"OpenAI generation enabled: {'yes' if openai_enabled else 'no'}")
 
     for class_info in selected_classes:
