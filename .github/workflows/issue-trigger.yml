@@ -28,7 +28,7 @@ jobs:
         env:
           ISSUE_BODY: ${{ github.event.issue.body }}
         run: |
-          python genai-orchestrator/runner.py parse-issue --issue-body "$ISSUE_BODY" --output-json parsed_issue.json
+          python runner.py parse-issue --issue-body "$ISSUE_BODY" --output-json parsed_issue.json
           echo "parsed_json_path=parsed_issue.json" >> "$GITHUB_OUTPUT"
 
       - name: Display parsed request
@@ -42,9 +42,9 @@ jobs:
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           ISSUE_URL: ${{ github.event.issue.html_url }}
         run: |
-          python genai-orchestrator/runner.py run-workflow \
+          python runner.py run-workflow \
             --config parsed_issue.json \
-            --agents-file genai-orchestrator/Agents.md
+            --agents-file Agents.md
 
       - name: Comment success on issue
         if: success()
