@@ -1,0 +1,73 @@
+name: Issue Triggered GenAI Workflow
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  run-agent-workflow:
+    if: contains(github.event.issue.labels.*.name, 'agent-request')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout orchestrator repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Parse issue form
+        id: parse
+        env:
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: |
+          python genai-orchestrator/runner.py parse-issue --issue-body "$ISSUE_BODY" --output-json parsed_issue.json
+          echo "parsed_json_path=parsed_issue.json" >> "$GITHUB_OUTPUT"
+
+      - name: Display parsed request
+        run: |
+          cat parsed_issue.json
+
+      - name: Run parameterized Agents workflow
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_URL: ${{ github.event.issue.html_url }}
+        run: |
+          python genai-orchestrator/runner.py run-workflow \
+            --config parsed_issue.json \
+            --agents-file genai-orchestrator/Agents.md
+
+      - name: Comment success on issue
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: "GenAI workflow completed. Review the generated Pull Request created by the runner."
+            })
+
+      - name: Comment failure on issue
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: "GenAI workflow failed. Check the GitHub Actions logs for details."
+            })
+
+# Made with Bob

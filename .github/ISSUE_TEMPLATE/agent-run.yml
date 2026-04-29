@@ -1,0 +1,63 @@
+name: Agent Workflow Request
+description: Select a repository and trigger the GenAI workflow
+title: "[agent-run]: "
+labels:
+  - agent-request
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form to trigger the GenAI workflow defined in `Agents.md`.
+
+  - type: dropdown
+    id: repository
+    attributes:
+      label: Repository
+      description: Select the repository to process
+      options:
+        - https://github.com/soumendhar1310/sample-project.git
+    validations:
+      required: true
+
+  - type: input
+    id: branch
+    attributes:
+      label: Target Branch
+      description: Branch to clone and use as the source branch
+      placeholder: main
+      value: main
+    validations:
+      required: true
+
+  - type: dropdown
+    id: run_sonar
+    attributes:
+      label: Run SonarQube Analysis
+      options:
+        - "yes"
+        - "no"
+      default: 0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: add_docs
+    attributes:
+      label: Add Inline Documentation
+      options:
+        - "yes"
+        - "no"
+      default: 0
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Additional Notes
+      description: Optional operator notes for the workflow
+      placeholder: Add any special instructions here
+    validations:
+      required: false
+
+# Made with Bob
