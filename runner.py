@@ -4,7 +4,161 @@ import os
 import re
 import subprocess
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
+
+
+@dataclass
+class CSharpClassInfo:
+    name: str
+    namespace: str
+    file_path: Path
+    constructor_dependencies: list[tuple[str, str]]
+    public_methods: list[str]
+    kind: str
+
+
+def classify_csharp_class(file_path: Path, class_name: str) -> str:
+    path_value = str(file_path).replace("\\", "/").lower()
+    class_name_lower = class_name.lower()
+    if "controller" in class_name_lower or "/controllers/" in path_value:
+        return "controller"
+    if "service" in class_name_lower or "/services/" in path_value:
+        return "service"
+    if "repository" in class_name_lower or "/repositories/" in path_value:
+        return "repository"
+    return "general"
+
+
+def parse_constructor_dependencies(class_body: str, class_name: str) -> list[tuple[str, str]]:
+    constructor_pattern = rf"public\s+{re.escape(class_name)}\s*\((.*?)\)"
+    constructor_match = re.search(constructor_pattern, class_body, re.DOTALL)
+    if not constructor_match:
+        return []
+
+    parameter_blob = constructor_match.group(1).strip()
+    if not parameter_blob:
+        return []
+
+    dependencies: list[tuple[str, str]] = []
+    for raw_parameter in parameter_blob.split(","):
+        parameter = raw_parameter.strip()
+        match = re.match(r"([\w<>\.\?\[\],]+)\s+(\w+)$", parameter)
+        if match:
+            dependencies.append((match.group(1), match.group(2)))
+    return dependencies
+
+
+def parse_public_methods(class_body: str) -> list[str]:
+    methods = re.findall(
+        r"public\s+(?:async\s+)?(?:[\w<>\.\?\[\],]+\s+)+(\w+)\s*\(",
+        class_body
+    )
+    return [method for method in methods if method not in {"Dispose"}]
+
+
+def inventory_csharp_classes(repo_dir: Path) -> list[CSharpClassInfo]:
+    class_inventory: list[CSharpClassInfo] = []
+
+    for file_path in repo_dir.rglob("*.cs"):
+        normalized_path = str(file_path).replace("\\", "/")
+        if any(segment in normalized_path for segment in ["/bin/", "/obj/", ".Tests/"]):
+            continue
+
+        source = file_path.read_text(encoding="utf-8")
+        namespace_match = re.search(r"namespace\s+([\w\.]+)", source)
+        class_match = re.search(r"public\s+class\s+(\w+)", source)
+        if not namespace_match or not class_match:
+            continue
+
+        class_name = class_match.group(1)
+        class_body = source[class_match.start():]
+        class_inventory.append(
+            CSharpClassInfo(
+                name=class_name,
+                namespace=namespace_match.group(1),
+                file_path=file_path,
+                constructor_dependencies=parse_constructor_dependencies(class_body, class_name),
+                public_methods=parse_public_methods(class_body),
+                kind=classify_csharp_class(file_path, class_name),
+            )
+        )
+
+    return class_inventory
+
+
+def generate_generic_test_file_content(class_info: CSharpClassInfo) -> str:
+    using_lines = {
+        "using NUnit.Framework;",
+        f"using {class_info.namespace};",
+    }
+
+    field_lines: list[str] = []
+    setup_lines: list[str] = []
+    constructor_args: list[str] = []
+
+    for dependency_type, dependency_name in class_info.constructor_dependencies:
+        is_interface = dependency_type.startswith("I")
+        if is_interface:
+            using_lines.add("using Moq;")
+            field_lines.append(f"    private Mock<{dependency_type}> _{dependency_name} = null!;")
+            setup_lines.append(f"        _{dependency_name} = new Mock<{dependency_type}>();")
+            constructor_args.append(f"_{dependency_name}.Object")
+        else:
+            field_lines.append(f"    private {dependency_type}? _{dependency_name};")
+            setup_lines.append(f"        _{dependency_name} = null;")
+            constructor_args.append(f"_{dependency_name}!")
+
+    field_lines.append(f"    private {class_info.name} _sut = null!;")
+    setup_lines.append(f"        _sut = new {class_info.name}({', '.join(constructor_args)});")
+
+    generated_tests: list[str] = []
+    for method_name in (class_info.public_methods[:5] or ["GeneratedPlaceholder"]):
+        generated_tests.append(
+            "\n".join(
+                [
+                    "    [Test]",
+                    f"    public void {method_name}_GeneratedSmokeTest()",
+                    "    {",
+                    "        Assert.That(_sut, Is.Not.Null);",
+                    "    }",
+                ]
+            )
+        )
+
+    return f"""{chr(10).join(sorted(using_lines))}
+
+namespace {class_info.namespace}.Tests;
+
+[TestFixture]
+public class {class_info.name}GeneratedTests
+{{
+{chr(10).join(field_lines)}
+
+    [SetUp]
+    public void SetUp()
+    {{
+{chr(10).join(setup_lines)}
+    }}
+
+{chr(10).join(generated_tests)}
+}}
+"""
+
+
+def generate_tests_for_inventory(test_project_path: Path, class_inventory: list[CSharpClassInfo]) -> None:
+    generated_dir = test_project_path.parent / "Generated"
+    generated_dir.mkdir(parents=True, exist_ok=True)
+
+    preferred_kinds = ["service", "controller", "repository", "general"]
+    ordered_inventory = sorted(
+        class_inventory,
+        key=lambda item: (preferred_kinds.index(item.kind), item.name)
+    )
+
+    for class_info in ordered_inventory[:10]:
+        target_path = generated_dir / f"{class_info.name}GeneratedTests.cs"
+        target_path.write_text(generate_generic_test_file_content(class_info), encoding="utf-8")
 
 
 def extract_field(issue_body: str, field_name: str) -> str:
@@ -205,8 +359,11 @@ def run_generic_dotnet_workflow(repo_dir: Path, config: dict) -> None:
     print(json.dumps(config, indent=2))
 
     repo_info = discover_dotnet_repo(repo_dir)
+    class_inventory = inventory_csharp_classes(repo_dir)
+    print(f"Discovered {len(class_inventory)} public classes for candidate test generation")
     solution_path = repo_info["solution_path"]
     test_project_path = ensure_nunit_test_project(repo_dir, repo_info)
+    generate_tests_for_inventory(test_project_path, class_inventory)
     coverage_rel_path = f"{test_project_path.parent.name}/TestResults/coverage.opencover.xml"
 
     run_command(f'dotnet restore "{solution_path}"', cwd=str(repo_dir))
