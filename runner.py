@@ -98,16 +98,9 @@ def generate_generic_test_file_content(class_info: CSharpClassInfo) -> str:
     constructor_args: list[str] = []
 
     for dependency_type, dependency_name in class_info.constructor_dependencies:
-        is_interface = dependency_type.startswith("I")
-        if is_interface:
-            using_lines.add("using Moq;")
-            field_lines.append(f"    private Mock<{dependency_type}> _{dependency_name} = null!;")
-            setup_lines.append(f"        _{dependency_name} = new Mock<{dependency_type}>();")
-            constructor_args.append(f"_{dependency_name}.Object")
-        else:
-            field_lines.append(f"    private {dependency_type}? _{dependency_name};")
-            setup_lines.append(f"        _{dependency_name} = null;")
-            constructor_args.append(f"_{dependency_name}!")
+        field_lines.append(f"    private {dependency_type}? _{dependency_name};")
+        setup_lines.append(f"        _{dependency_name} = null;")
+        constructor_args.append(f"_{dependency_name}!")
 
     field_lines.append(f"    private {class_info.name} _sut = null!;")
     setup_lines.append(f"        _sut = new {class_info.name}({', '.join(constructor_args)});")
@@ -156,7 +149,10 @@ def generate_tests_for_inventory(test_project_path: Path, class_inventory: list[
         key=lambda item: (preferred_kinds.index(item.kind), item.name)
     )
 
-    for class_info in ordered_inventory[:10]:
+    supported_kinds = {"repository"}
+    for class_info in ordered_inventory:
+        if class_info.kind not in supported_kinds:
+            continue
         target_path = generated_dir / f"{class_info.name}GeneratedTests.cs"
         target_path.write_text(generate_generic_test_file_content(class_info), encoding="utf-8")
 
