@@ -89,6 +89,7 @@ flowchart TD
 - Create or update NUnit tests
 - Focus on business logic, branches, repository behavior, and controller outcomes
 - Produce an initial candidate test set for downstream validation and refinement
+- Allow later iterations to target specific low-covered classes instead of repeating only broad generation
 
 ---
 
@@ -107,12 +108,14 @@ flowchart TD
 **Responsibility**
 - Parse `coverage.opencover.xml`
 - Identify the lowest-covered classes and methods
+- Filter out synthetic compiler-generated targets such as async state machine types
 - Produce a refinement target list for the next iteration
 
 **Outputs**
 - Coverage gap summary
 - Ranked uncovered or low-covered classes
 - Ranked uncovered or low-covered methods
+- Filtered refinement target list focused on real source classes
 
 ---
 
@@ -121,6 +124,7 @@ flowchart TD
 - Use build results, test results, and coverage gap findings to guide the next iteration
 - Prefer targeted regeneration over broad repeated smoke-test generation
 - Preserve successful generated files when possible and focus effort on low-covered areas
+- Prioritize service and controller classes when they dominate the uncovered business logic
 
 ---
 

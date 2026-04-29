@@ -271,8 +271,47 @@ def is_supported_heuristic_kind(class_info: CSharpClassInfo, attempt: int) -> bo
     if attempt == 1:
         return class_info.kind == "repository"
     if attempt == 2:
-        return class_info.kind in {"repository", "controller"}
+        return class_info.kind in {"repository", "controller", "service"}
     return class_info.kind in {"repository", "controller", "service", "general"}
+
+
+def is_synthetic_coverage_class_name(class_name: str) -> bool:
+    return "<" in class_name or ">" in class_name or class_name == "Program"
+
+
+def select_refinement_targets(
+    class_inventory: list[CSharpClassInfo],
+    coverage_summary: list[CoverageClassInfo] | None,
+    attempt: int
+) -> list[CSharpClassInfo]:
+    preferred_order = {"service": 0, "controller": 1, "repository": 2, "general": 3}
+    supported_classes = [item for item in class_inventory if is_supported_heuristic_kind(item, attempt)]
+
+    if attempt == 1 or not coverage_summary:
+        return sorted(supported_classes, key=lambda item: (preferred_order.get(item.kind, 99), item.name))
+
+    supported_by_name = {item.name: item for item in supported_classes}
+    targeted: list[CSharpClassInfo] = []
+    seen_names: set[str] = set()
+
+    for coverage_class in coverage_summary:
+        if is_synthetic_coverage_class_name(coverage_class.class_name):
+            continue
+        matched = supported_by_name.get(coverage_class.class_name)
+        if matched and matched.name not in seen_names:
+            targeted.append(matched)
+            seen_names.add(matched.name)
+
+    if targeted:
+        remaining = [
+            item for item in sorted(supported_classes, key=lambda item: (preferred_order.get(item.kind, 99), item.name))
+            if item.name not in seen_names
+        ]
+        if attempt == 2:
+            return targeted + remaining[:2]
+        return targeted + remaining[:4]
+
+    return sorted(supported_classes, key=lambda item: (preferred_order.get(item.kind, 99), item.name))
 
 
 def build_heuristic_usings(class_info: CSharpClassInfo) -> list[str]:
@@ -617,7 +656,8 @@ def generate_tests_for_inventory(
     test_project_path: Path,
     class_inventory: list[CSharpClassInfo],
     enum_inventory: dict[str, set[str]],
-    attempt: int
+    attempt: int,
+    coverage_summary: list[CoverageClassInfo] | None = None
 ) -> None:
     generated_dir = test_project_path.parent / "Generated"
     generated_dir.mkdir(parents=True, exist_ok=True)
@@ -625,14 +665,9 @@ def generate_tests_for_inventory(
     for existing_file in generated_dir.glob("*.cs"):
         existing_file.unlink()
 
-    preferred_order = ["repository", "controller", "service", "general"]
-    ordered_inventory = sorted(
-        class_inventory,
-        key=lambda item: (preferred_order.index(item.kind), item.name)
-    )
-
-    selected_classes = [item for item in ordered_inventory if is_supported_heuristic_kind(item, attempt)]
-    print(f"Attempt {attempt}: generating tests for {len(selected_classes)} classes across supported heuristic kinds")
+    selected_classes = select_refinement_targets(class_inventory, coverage_summary, attempt)
+    print(f"Attempt {attempt}: generating tests for {len(selected_classes)} classes after refinement targeting")
+    print(f"Selected classes: {', '.join(item.name for item in selected_classes[:12])}")
 
     openai_enabled = bool(get_openai_client())
     allow_openai_kinds = {"repository"} if attempt in {1, 2, 3} else {"repository"}
@@ -956,9 +991,10 @@ def run_generic_dotnet_workflow(repo_dir: Path, config: dict) -> None:
 
     target_coverage = float(config.get("target_coverage", 30.0))
     last_coverage_percent = 0.0
+    coverage_summary: list[CoverageClassInfo] | None = None
     for attempt in range(1, 4):
         print(f"Starting generation/coverage attempt {attempt} of 3")
-        generate_tests_for_inventory(test_project_path, class_inventory, enum_inventory, attempt)
+        generate_tests_for_inventory(test_project_path, class_inventory, enum_inventory, attempt, coverage_summary)
 
         build_result = run_command_capture(f'dotnet build "{solution_path}" --no-restore', cwd=str(repo_dir))
         if build_result.returncode != 0:

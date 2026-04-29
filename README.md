@@ -219,21 +219,24 @@ Recommended additional secret/variable setup:
   - `OPENAI_MODEL`
 
 ### Coverage-gap refinement behavior
-The runner now performs a first-stage refinement loop.
+The runner now performs a staged refinement loop.
 
 Current refinement behavior:
 - run tests with Coverlet and generate `coverage.opencover.xml`
 - compute overall line coverage
 - parse the OpenCover XML to identify the lowest-covered classes and methods
+- filter out synthetic compiler-generated coverage entries such as async state-machine class names
+- use the coverage summary to steer later attempts toward real low-covered classes
+- prioritize service and controller classes ahead of broader fallback generation in refinement attempts
 - print the lowest-covered areas after a failed coverage attempt
 - use up to 3 total attempts for generation and coverage improvement
 
-This is the first step toward a more agentic refinement model.
+This is the first practical step toward a more agentic refinement model.
 
 Planned next refinement steps:
 - classify build and test failures
 - repair only failing generated test files
-- target uncovered methods instead of broad smoke-test regeneration
+- target uncovered methods instead of mainly class-level prioritization
 - preserve successful generated tests while refining only weak areas
 
 ### Make repository selection broader
