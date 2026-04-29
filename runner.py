@@ -69,94 +69,126 @@ def create_branch(repo_dir: Path, issue_number: str) -> str:
     return branch_name
 
 
-def ensure_sample_project_supported(config: dict) -> None:
-    repository_url = config["repository_url"].rstrip("/")
-    if repository_url != "https://github.com/soumendhar1310/sample-project.git":
-        raise RuntimeError("This implementation currently supports only sample-project.")
+def discover_dotnet_repo(repo_dir: Path) -> dict:
+    sln_files = sorted(repo_dir.rglob("*.sln"))
+    if not sln_files:
+        raise RuntimeError("No .sln file found in the target repository")
+
+    solution_path = sln_files[0]
+    all_csproj_files = sorted(repo_dir.rglob("*.csproj"))
+    test_projects = [path for path in all_csproj_files if path.stem.endswith(".Tests") or "Test" in path.stem]
+    app_projects = [path for path in all_csproj_files if path not in test_projects]
+
+    if not app_projects:
+        raise RuntimeError("No non-test .csproj files found in the target repository")
+
+    primary_project = app_projects[0]
+    return {
+        "solution_path": solution_path,
+        "all_csproj_files": all_csproj_files,
+        "test_projects": test_projects,
+        "app_projects": app_projects,
+        "primary_project": primary_project,
+    }
 
 
-def seed_sample_project_assets(repo_dir: Path) -> None:
-    source_root = Path.cwd() / "sample-project"
-    print(f"Using sample-project baseline from: {source_root}")
+def ensure_nunit_test_project(repo_dir: Path, repo_info: dict) -> Path:
+    if repo_info["test_projects"]:
+        return repo_info["test_projects"][0]
 
-    for relative_path in [
-        Path("BankingSystem.Tests/BankingSystem.Tests.csproj"),
-        Path("BankingSystem.Tests/AccountServiceTests.cs"),
-        Path("BankingSystem.Tests/RepositoryAndControllerTests.cs"),
-        Path("BankingSystem.Core/Services/AccountService.cs"),
-        Path("BankingSystem.Api/Controllers/AccountsController.cs"),
-        Path("BankingSystem.Core/Repositories/InMemoryAccountRepository.cs"),
-        Path("BankingSystem.Core/Repositories/InMemoryHoldRepository.cs"),
-        Path("BankingSystem.Core/Repositories/InMemoryTransactionRepository.cs"),
-    ]:
-        source_path = source_root / relative_path
-        target_path = repo_dir / relative_path
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        target_path.write_text(source_path.read_text(encoding="utf-8"), encoding="utf-8")
+    primary_project = repo_info["primary_project"]
+    tests_dir = primary_project.parent.parent / f"{primary_project.stem}.Tests"
+    tests_dir.mkdir(parents=True, exist_ok=True)
+    test_project_path = tests_dir / f"{primary_project.stem}.Tests.csproj"
 
-    sln_path = repo_dir / "BankingSystem.sln"
-    sln_text = sln_path.read_text(encoding="utf-8")
-    if "BankingSystem.Tests\\BankingSystem.Tests.csproj" not in sln_text:
-        addition = (
-            'Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BankingSystem.Tests", '
-            '"BankingSystem.Tests\\BankingSystem.Tests.csproj", "{8A5E778F-16B4-4D74-9A8F-6EF5D9A23F11}"\n'
-            "EndProject\n"
-        )
-        marker = 'Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BankingSystem.Core", "BankingSystem.Core\\BankingSystem.Core.csproj", "{373BEBC8-BA37-4EF0-ADB2-2F8B48BC6759}"\nEndProject\n'
-        sln_text = sln_text.replace(marker, marker + addition)
+    test_project_path.write_text(
+        f"""<Project Sdk="Microsoft.NET.Sdk">
 
-        config_marker = "\t\t{373BEBC8-BA37-4EF0-ADB2-2F8B48BC6759}.Release|Any CPU.Build.0 = Release|Any CPU\n"
-        config_addition = (
-            "\t\t{8A5E778F-16B4-4D74-9A8F-6EF5D9A23F11}.Debug|Any CPU.ActiveCfg = Debug|Any CPU\n"
-            "\t\t{8A5E778F-16B4-4D74-9A8F-6EF5D9A23F11}.Debug|Any CPU.Build.0 = Debug|Any CPU\n"
-            "\t\t{8A5E778F-16B4-4D74-9A8F-6EF5D9A23F11}.Release|Any CPU.ActiveCfg = Release|Any CPU\n"
-            "\t\t{8A5E778F-16B4-4D74-9A8F-6EF5D9A23F11}.Release|Any CPU.Build.0 = Release|Any CPU\n"
-        )
-        sln_text = sln_text.replace(config_marker, config_marker + config_addition)
-        sln_path.write_text(sln_text, encoding="utf-8")
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
 
+  <ItemGroup>
+    <PackageReference Include="coverlet.msbuild" Version="6.0.2" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.10.0" />
+    <PackageReference Include="NUnit" Version="4.1.0" />
+    <PackageReference Include="NUnit3TestAdapter" Version="4.5.0" />
+  </ItemGroup>
 
-def run_real_sample_project_workflow(repo_dir: Path, config: dict) -> None:
-    ensure_sample_project_supported(config)
-    seed_sample_project_assets(repo_dir)
+  <ItemGroup>
+    <ProjectReference Include="..\\{primary_project.parent.name}\\{primary_project.name}" />
+  </ItemGroup>
 
-    print("Agents.md-driven real workflow started")
-    print(json.dumps(config, indent=2))
-
-    run_command("dotnet restore BankingSystem.sln", cwd=str(repo_dir))
-
-    sonar_executed = False
-    if config["run_sonar"]:
-        sonar_token = os.getenv("SONAR_TOKEN", "")
-        if not sonar_token:
-            raise RuntimeError("SONAR_TOKEN is required when SonarQube analysis is enabled")
-
-        sonar_probe = run_command_capture("curl -sf http://localhost:9000/api/system/status", cwd=str(repo_dir))
-        if sonar_probe.returncode == 0:
-            sonar_begin = (
-                'export PATH="$PATH:$HOME/.dotnet/tools" && '
-                'dotnet-sonarscanner begin '
-                '/k:"sample-project" '
-                '/d:sonar.host.url="http://localhost:9000" '
-                f'/d:sonar.token="{sonar_token}" '
-                '/d:sonar.cs.opencover.reportsPaths="BankingSystem.Tests/TestResults/coverage.opencover.xml"'
-            )
-            run_command(sonar_begin, cwd=str(repo_dir))
-            sonar_executed = True
-        else:
-            print("SonarQube server is not reachable at http://localhost:9000. Skipping SonarQube step.")
-
-    run_command("dotnet build BankingSystem.sln --no-restore", cwd=str(repo_dir))
-    run_command(
-        "dotnet test BankingSystem.Tests/BankingSystem.Tests.csproj "
-        "--no-build "
-        '/p:CollectCoverage=true '
-        '/p:CoverletOutput=TestResults/coverage '
-        '/p:CoverletOutputFormat=opencover',
-        cwd=str(repo_dir)
+</Project>
+""",
+        encoding="utf-8"
     )
 
-    coverage_path = repo_dir / "BankingSystem.Tests" / "TestResults" / "coverage.opencover.xml"
+    smoke_test_path = tests_dir / "GeneratedSmokeTests.cs"
+    smoke_test_path.write_text(
+        f"""using NUnit.Framework;
+
+namespace {primary_project.stem}.Tests;
+
+[TestFixture]
+public class GeneratedSmokeTests
+{{
+    [Test]
+    public void Generated_placeholder_test_passes()
+    {{
+        Assert.That(true, Is.True);
+    }}
+}}
+""",
+        encoding="utf-8"
+    )
+
+    run_command(
+        f'dotnet sln "{repo_info["solution_path"]}" add "{test_project_path}"',
+        cwd=str(repo_dir)
+    )
+    return test_project_path
+
+
+def maybe_run_sonar_begin(repo_dir: Path, config: dict, coverage_rel_path: str) -> bool:
+    if not config["run_sonar"]:
+        return False
+
+    sonar_token = os.getenv("SONAR_TOKEN", "")
+    if not sonar_token:
+        raise RuntimeError("SONAR_TOKEN is required when SonarQube analysis is enabled")
+
+    sonar_probe = run_command_capture("curl -sf http://localhost:9000/api/system/status", cwd=str(repo_dir))
+    if sonar_probe.returncode != 0:
+        print("SonarQube server is not reachable at http://localhost:9000. Skipping SonarQube step.")
+        return False
+
+    sonar_begin = (
+        'export PATH="$PATH:$HOME/.dotnet/tools" && '
+        'dotnet-sonarscanner begin '
+        '/k:"sample-project" '
+        '/d:sonar.host.url="http://localhost:9000" '
+        f'/d:sonar.token="{sonar_token}" '
+        f'/d:sonar.cs.opencover.reportsPaths="{coverage_rel_path}"'
+    )
+    run_command(sonar_begin, cwd=str(repo_dir))
+    return True
+
+
+def maybe_run_sonar_end(repo_dir: Path) -> None:
+    sonar_token = os.getenv("SONAR_TOKEN", "")
+    sonar_end = (
+        'export PATH="$PATH:$HOME/.dotnet/tools" && '
+        f'dotnet-sonarscanner end /d:sonar.token="{sonar_token}"'
+    )
+    run_command(sonar_end, cwd=str(repo_dir))
+
+
+def compute_coverage_percent(coverage_path: Path) -> float:
     if not coverage_path.exists():
         raise RuntimeError("coverage.opencover.xml was not generated")
 
@@ -165,19 +197,39 @@ def run_real_sample_project_workflow(repo_dir: Path, config: dict) -> None:
     visited_points = [int(value) for value in re.findall(r'visitedSequencePoints="(\d+)"', coverage_text)]
     total_sequence_points = sum(sequence_points)
     total_visited_points = sum(visited_points)
-    coverage_percent = (total_visited_points / total_sequence_points * 100) if total_sequence_points else 0.0
+    return (total_visited_points / total_sequence_points * 100) if total_sequence_points else 0.0
+
+
+def run_generic_dotnet_workflow(repo_dir: Path, config: dict) -> None:
+    print("Agents.md-driven generic .NET workflow started")
+    print(json.dumps(config, indent=2))
+
+    repo_info = discover_dotnet_repo(repo_dir)
+    solution_path = repo_info["solution_path"]
+    test_project_path = ensure_nunit_test_project(repo_dir, repo_info)
+    coverage_rel_path = f"{test_project_path.parent.name}/TestResults/coverage.opencover.xml"
+
+    run_command(f'dotnet restore "{solution_path}"', cwd=str(repo_dir))
+    sonar_executed = maybe_run_sonar_begin(repo_dir, config, coverage_rel_path)
+    run_command(f'dotnet build "{solution_path}" --no-restore', cwd=str(repo_dir))
+    run_command(
+        f'dotnet test "{test_project_path}" '
+        '--no-build '
+        '/p:CollectCoverage=true '
+        '/p:CoverletOutput=TestResults/coverage '
+        '/p:CoverletOutputFormat=opencover',
+        cwd=str(repo_dir)
+    )
+
+    coverage_path = test_project_path.parent / "TestResults" / "coverage.opencover.xml"
+    coverage_percent = compute_coverage_percent(coverage_path)
     print(f"Computed line coverage: {coverage_percent:.2f}%")
 
     if coverage_percent < 80.0:
         raise RuntimeError(f"Coverage threshold not met: {coverage_percent:.2f}% < 80.00%")
 
     if sonar_executed:
-        sonar_token = os.getenv("SONAR_TOKEN", "")
-        sonar_end = (
-            'export PATH="$PATH:$HOME/.dotnet/tools" && '
-            f'dotnet-sonarscanner end /d:sonar.token="{sonar_token}"'
-        )
-        run_command(sonar_end, cwd=str(repo_dir))
+        maybe_run_sonar_end(repo_dir)
 
     print(f"Coverage threshold satisfied: {coverage_percent:.2f}%")
     print(f"Repository workspace: {repo_dir}")
@@ -315,7 +367,7 @@ def main() -> None:
         branch_name = create_branch(repo_dir, config.get("issue_number", ""))
         print(f"Created working branch: {branch_name}")
 
-        run_real_sample_project_workflow(repo_dir, config)
+        run_generic_dotnet_workflow(repo_dir, config)
         commit_and_push_changes(repo_dir, branch_name, config.get("issue_number", ""))
         pr_url = create_pull_request(config, branch_name)
         print(f"Pull request URL: {pr_url}")
