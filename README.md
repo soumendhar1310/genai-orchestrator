@@ -128,6 +128,7 @@ Choose:
 Fill in:
 - Repository
 - Target Branch
+- Target Test Coverage %
 - Run SonarQube Analysis
 - Add Inline Documentation
 - Additional Notes
@@ -168,8 +169,11 @@ It now supports:
 - run `dotnet build`
 - run Coverlet in OpenCover format
 - compute overall coverage
+- parse `coverage.opencover.xml` for the lowest-covered classes and methods
+- print a coverage-gap summary for refinement after failed attempts
 - retry generation and coverage up to 3 times
 - optionally run SonarQube when reachable
+- optionally add inline XML documentation when enabled
 - commit changes
 - push branch
 - create Pull Request
@@ -178,6 +182,8 @@ It still needs improvement in:
 - richer generic test quality for arbitrary repositories
 - stronger inline documentation generation
 - better repository-specific namespace/interface resolution
+- targeted regeneration using coverage-gap findings instead of mostly broad retries
+- automated repair of compile/test failures before the next refinement cycle
 
 ## Recommended next enhancements
 
@@ -211,6 +217,24 @@ Recommended additional secret/variable setup:
   - `OPENAI_API_KEY`
 - Optional variable:
   - `OPENAI_MODEL`
+
+### Coverage-gap refinement behavior
+The runner now performs a first-stage refinement loop.
+
+Current refinement behavior:
+- run tests with Coverlet and generate `coverage.opencover.xml`
+- compute overall line coverage
+- parse the OpenCover XML to identify the lowest-covered classes and methods
+- print the lowest-covered areas after a failed coverage attempt
+- use up to 3 total attempts for generation and coverage improvement
+
+This is the first step toward a more agentic refinement model.
+
+Planned next refinement steps:
+- classify build and test failures
+- repair only failing generated test files
+- target uncovered methods instead of broad smoke-test regeneration
+- preserve successful generated tests while refining only weak areas
 
 ### Make repository selection broader
 GitHub Issue Forms dropdown values are static.

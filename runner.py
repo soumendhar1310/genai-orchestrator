@@ -8,6 +8,7 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+import xml.etree.ElementTree as ET
 
 
 @dataclass
@@ -19,6 +20,32 @@ class CSharpClassInfo:
     public_methods: list[str]
     kind: str
     source: str
+
+
+@dataclass
+class CoverageMethodInfo:
+    class_name: str
+    method_name: str
+    file_path: str
+    visited_sequence_points: int
+    total_sequence_points: int
+
+    @property
+    def coverage_percent(self) -> float:
+        return (self.visited_sequence_points / self.total_sequence_points * 100) if self.total_sequence_points else 0.0
+
+
+@dataclass
+class CoverageClassInfo:
+    class_name: str
+    file_path: str
+    visited_sequence_points: int
+    total_sequence_points: int
+    methods: list[CoverageMethodInfo]
+
+    @property
+    def coverage_percent(self) -> float:
+        return (self.visited_sequence_points / self.total_sequence_points * 100) if self.total_sequence_points else 0.0
 
 
 def classify_csharp_class(file_path: Path, class_name: str) -> str:
@@ -833,6 +860,84 @@ def compute_coverage_percent(coverage_path: Path) -> float:
     return (total_visited_points / total_sequence_points * 100) if total_sequence_points else 0.0
 
 
+def parse_coverage_summary(coverage_path: Path, limit: int = 10) -> list[CoverageClassInfo]:
+    if not coverage_path.exists():
+        raise RuntimeError("coverage.opencover.xml was not generated")
+
+    root = ET.fromstring(coverage_path.read_text(encoding="utf-8"))
+    class_summaries: list[CoverageClassInfo] = []
+
+    for class_element in root.findall(".//Class"):
+        full_name = class_element.findtext("./FullName", default="")
+        class_name = full_name.split(".")[-1] if full_name else "UnknownClass"
+        file_path = ""
+        methods: list[CoverageMethodInfo] = []
+        class_total = 0
+        class_visited = 0
+
+        for method_element in class_element.findall("./Methods/Method"):
+            file_ref = method_element.find("./FileRef")
+            if file_ref is not None:
+                file_path = file_ref.attrib.get("uid", file_path)
+
+            method_name = method_element.attrib.get("name", "UnknownMethod")
+            sequence_points = method_element.findall("./SequencePoints/SequencePoint")
+            total_points = len(sequence_points)
+            visited_points = sum(1 for point in sequence_points if int(point.attrib.get("vc", "0")) > 0)
+
+            if total_points == 0:
+                continue
+
+            class_total += total_points
+            class_visited += visited_points
+            methods.append(
+                CoverageMethodInfo(
+                    class_name=class_name,
+                    method_name=method_name,
+                    file_path=file_path,
+                    visited_sequence_points=visited_points,
+                    total_sequence_points=total_points
+                )
+            )
+
+        if class_total == 0:
+            continue
+
+        methods.sort(key=lambda item: (item.coverage_percent, -item.total_sequence_points, item.method_name))
+        class_summaries.append(
+            CoverageClassInfo(
+                class_name=class_name,
+                file_path=file_path,
+                visited_sequence_points=class_visited,
+                total_sequence_points=class_total,
+                methods=methods
+            )
+        )
+
+    class_summaries.sort(key=lambda item: (item.coverage_percent, -item.total_sequence_points, item.class_name))
+    return class_summaries[:limit]
+
+
+def print_coverage_gap_summary(coverage_classes: list[CoverageClassInfo], method_limit: int = 3) -> None:
+    if not coverage_classes:
+        print("No coverage gap summary available")
+        return
+
+    print("Lowest-covered classes from coverage.opencover.xml:")
+    for coverage_class in coverage_classes:
+        print(
+            f"- {coverage_class.class_name}: "
+            f"{coverage_class.coverage_percent:.2f}% "
+            f"({coverage_class.visited_sequence_points}/{coverage_class.total_sequence_points})"
+        )
+        for method in coverage_class.methods[:method_limit]:
+            print(
+                f"  - {method.method_name}: "
+                f"{method.coverage_percent:.2f}% "
+                f"({method.visited_sequence_points}/{method.total_sequence_points})"
+            )
+
+
 def run_generic_dotnet_workflow(repo_dir: Path, config: dict) -> None:
     print("Agents.md-driven generic .NET workflow started")
     print(json.dumps(config, indent=2))
@@ -878,6 +983,7 @@ def run_generic_dotnet_workflow(repo_dir: Path, config: dict) -> None:
 
         coverage_path = test_project_path.parent / "TestResults" / "coverage.opencover.xml"
         last_coverage_percent = compute_coverage_percent(coverage_path)
+        coverage_summary = parse_coverage_summary(coverage_path)
         print(f"Computed line coverage after attempt {attempt}: {last_coverage_percent:.2f}%")
 
         if last_coverage_percent >= target_coverage:
@@ -893,6 +999,7 @@ def run_generic_dotnet_workflow(repo_dir: Path, config: dict) -> None:
             f"Coverage below threshold after attempt {attempt}: "
             f"{last_coverage_percent:.2f}% < {target_coverage:.2f}%"
         )
+        print_coverage_gap_summary(coverage_summary)
 
     raise RuntimeError(
         f"Coverage threshold not met after 3 attempts: "

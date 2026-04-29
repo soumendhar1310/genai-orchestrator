@@ -34,7 +34,9 @@ flowchart TD
     G --> A[Code Analysis Agent]
     A --> T[Test Generation Agent]
     T --> C[Coverage Agent]
-    C --> S[SonarQube Agent]
+    C --> G2[Coverage Gap Agent]
+    G2 --> R1[Refinement Agent]
+    R1 --> S[SonarQube Agent]
     S --> D[Documentation Agent]
     D --> B[Branch and Commit Agent]
     B --> R[Pull Request Agent]
@@ -86,6 +88,7 @@ flowchart TD
 **Responsibility**
 - Create or update NUnit tests
 - Focus on business logic, branches, repository behavior, and controller outcomes
+- Produce an initial candidate test set for downstream validation and refinement
 
 ---
 
@@ -100,7 +103,28 @@ flowchart TD
 
 ---
 
-### 6. SonarQube Agent
+### 6. Coverage Gap Agent
+**Responsibility**
+- Parse `coverage.opencover.xml`
+- Identify the lowest-covered classes and methods
+- Produce a refinement target list for the next iteration
+
+**Outputs**
+- Coverage gap summary
+- Ranked uncovered or low-covered classes
+- Ranked uncovered or low-covered methods
+
+---
+
+### 7. Refinement Agent
+**Responsibility**
+- Use build results, test results, and coverage gap findings to guide the next iteration
+- Prefer targeted regeneration over broad repeated smoke-test generation
+- Preserve successful generated files when possible and focus effort on low-covered areas
+
+---
+
+### 8. SonarQube Agent
 **Responsibility**
 - Run SonarQube analysis when `run_sonar` is enabled
 - Use `SONAR_TOKEN`
@@ -108,13 +132,13 @@ flowchart TD
 
 ---
 
-### 7. Documentation Agent
+### 9. Documentation Agent
 **Responsibility**
 - Add inline XML documentation when `add_docs` is enabled
 
 ---
 
-### 8. Branch and Commit Agent
+### 10. Branch and Commit Agent
 **Responsibility**
 - Create a working branch for generated changes
 - Commit generated output
@@ -125,7 +149,7 @@ flowchart TD
 
 ---
 
-### 9. Pull Request Agent
+### 11. Pull Request Agent
 **Responsibility**
 - Open a Pull Request against the requested branch
 - Reference the originating issue
@@ -140,11 +164,12 @@ flowchart TD
 3. Analyze codebase
 4. Generate or update NUnit tests
 5. Run Coverlet and create `coverage.opencover.xml`
-6. If coverage is below the configured target, retry up to 3 iterations
-7. Run SonarQube if enabled
-8. Add inline documentation if enabled
-9. Create branch, commit, and push
-10. Create Pull Request for review
+6. Parse coverage gaps and identify the lowest-covered classes and methods
+7. If coverage is below the configured target, refine and retry up to 3 iterations
+8. Run SonarQube if enabled
+9. Add inline documentation if enabled
+10. Create branch, commit, and push
+11. Create Pull Request for review
 
 ---
 
@@ -153,6 +178,7 @@ The workflow is successful only if:
 - The selected repository is cloned successfully
 - NUnit tests are generated or updated
 - `coverage.opencover.xml` is generated
+- Coverage gaps are summarized for refinement when the target is not yet met
 - The configured target coverage is achieved within 3 iterations
 - SonarQube analysis runs when enabled
 - Documentation is added when enabled
