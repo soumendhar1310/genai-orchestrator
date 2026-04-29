@@ -197,6 +197,9 @@ def build_heuristic_usings(class_info: CSharpClassInfo) -> list[str]:
         f"using {class_info.namespace};",
     }
 
+    if class_info.kind == "controller":
+        return sorted(using_lines)
+
     namespace_root = ".".join(class_info.namespace.split(".")[:2]) if "." in class_info.namespace else class_info.namespace
     namespace_candidates = {
         namespace_root,
@@ -239,6 +242,44 @@ def generate_heuristic_test_file_content(class_info: CSharpClassInfo) -> str:
     field_lines: list[str] = []
     setup_lines: list[str] = []
     constructor_args: list[str] = []
+
+    if class_info.kind == "controller":
+        constructor_args = ["null!" for _ in class_info.constructor_dependencies]
+        if constructor_args:
+            setup_lines.append(f"        _sut = new {class_info.name}({', '.join(constructor_args)});")
+        else:
+            setup_lines.append(f"        _sut = new {class_info.name}();")
+
+        generated_tests = [
+            "\n".join(
+                [
+                    "    [Test]",
+                    "    public void Controller_GeneratedSmokeTest()",
+                    "    {",
+                    "        Assert.That(_sut, Is.Not.Null);",
+                    "    }",
+                ]
+            )
+        ]
+
+        return f"""{chr(10).join(using_lines)}
+
+namespace {class_info.namespace}.Tests;
+
+[TestFixture]
+public class {class_info.name}GeneratedTests
+{{
+    private {class_info.name} _sut = null!;
+
+    [SetUp]
+    public void SetUp()
+    {{
+{chr(10).join(setup_lines)}
+    }}
+
+{chr(10).join(generated_tests)}
+}}
+"""
 
     for dependency_type, dependency_name in class_info.constructor_dependencies:
         clean_type = sanitize_dependency_type(dependency_type)
