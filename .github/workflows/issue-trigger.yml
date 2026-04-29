@@ -17,6 +17,15 @@ jobs:
     steps:
       - name: Checkout orchestrator repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout local sample-project baseline
+        uses: actions/checkout@v4
+        with:
+          repository: soumendhar1310/sample-project
+          path: sample-project
+          token: ${{ secrets.GH_PAT }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
