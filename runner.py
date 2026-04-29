@@ -394,7 +394,76 @@ def has_invalid_enum_references(generated_content: str, enum_inventory: dict[str
     return False
 
 
-def generate_openai_test_file_content(class_info: CSharpClassInfo) -> str | None:
+def extract_using_statements(source: str) -> list[str]:
+    return re.findall(r"^\s*using\s+([\w\.]+)\s*;", source, re.MULTILINE)
+
+
+def collect_repo_namespaces(repo_dir: Path, limit: int = 40) -> list[str]:
+    namespaces: set[str] = set()
+    for file_path in repo_dir.rglob("*.cs"):
+        normalized_path = str(file_path).replace("\\", "/")
+        if any(segment in normalized_path for segment in ["/bin/", "/obj/", ".Tests/"]):
+            continue
+        source = file_path.read_text(encoding="utf-8")
+        namespace_match = re.search(r"namespace\s+([\w\.]+)", source)
+        if namespace_match:
+            namespaces.add(namespace_match.group(1))
+    return sorted(namespaces)[:limit]
+
+
+def collect_related_source_snippets(repo_dir: Path, class_info: CSharpClassInfo, limit: int = 8) -> list[str]:
+    candidate_type_names = {class_info.name}
+    candidate_type_names.update(sanitize_dependency_type(dep_type).split("<")[0] for dep_type, _ in class_info.constructor_dependencies)
+    candidate_type_names.update(re.findall(r"\b([A-Z]\w+)\b", class_info.source))
+
+    snippets: list[str] = []
+    seen_paths: set[Path] = set()
+
+    for file_path in repo_dir.rglob("*.cs"):
+        normalized_path = str(file_path).replace("\\", "/")
+        if any(segment in normalized_path for segment in ["/bin/", "/obj/", ".Tests/"]):
+            continue
+        if file_path == class_info.file_path:
+            continue
+
+        source = file_path.read_text(encoding="utf-8")
+        if not any(
+            re.search(rf"\b(class|interface|enum|record)\s+{re.escape(type_name)}\b", source)
+            for type_name in candidate_type_names
+        ):
+            continue
+
+        if file_path in seen_paths:
+            continue
+
+        seen_paths.add(file_path)
+        snippets.append(f"File: {file_path.relative_to(repo_dir)}\n{source}")
+        if len(snippets) >= limit:
+            break
+
+    return snippets
+
+
+def build_openai_context(repo_dir: Path, class_info: CSharpClassInfo) -> str:
+    repo_namespaces = collect_repo_namespaces(repo_dir)
+    using_statements = extract_using_statements(class_info.source)
+    related_snippets = collect_related_source_snippets(repo_dir, class_info)
+
+    context_sections = [
+        "Available repository namespaces:",
+        "\n".join(f"- {namespace}" for namespace in repo_namespaces) or "- none found",
+        "",
+        "Using directives in target file:",
+        "\n".join(f"- {using_statement}" for using_statement in using_statements) or "- none found",
+        "",
+        "Related source snippets from repository:",
+        "\n\n".join(related_snippets) or "No related snippets found."
+    ]
+
+    return "\n".join(context_sections)
+
+
+def generate_openai_test_file_content(repo_dir: Path, class_info: CSharpClassInfo) -> str | None:
     client = get_openai_client()
     if client is None:
         return None
@@ -405,6 +474,7 @@ def generate_openai_test_file_content(class_info: CSharpClassInfo) -> str | None
     ) or "none"
 
     method_summary = ", ".join(class_info.public_methods[:10]) or "none"
+    repo_context = build_openai_context(repo_dir, class_info)
 
     prompt = f"""
 Generate a compilable C# NUnit 4 test file for the class below.
@@ -418,7 +488,8 @@ Requirements:
 - Include all necessary using statements.
 - Namespace should be {class_info.namespace}.Tests
 - Test class name should be {class_info.name}GeneratedTests
-- Never invent enum members, property names, methods, interfaces, return types, DTO fields, or helper classes not present in source.
+- Use only namespaces, types, and members that are visible in the target source and repository context below.
+- Never invent enum members, property names, methods, interfaces, return types, DTO fields, or helper classes not present in source/context.
 - Never create dummy implementations such as DummyService, DummyRepository, FakeService, FakeRepository, or any class implementing an interface manually.
 - Never implement interfaces manually unless the exact full interface definition is provided in the prompt.
 - Do not use Moq.
@@ -432,7 +503,10 @@ Class name: {class_info.name}
 Constructor dependencies: {dependency_summary}
 Public methods: {method_summary}
 
-Source:
+Repository context:
+{repo_context}
+
+Target source:
 {class_info.source}
 """.strip()
 
@@ -484,7 +558,7 @@ def generate_tests_for_inventory(
         generated_content = None
 
         if openai_enabled and class_info.kind in allow_openai_kinds:
-            generated_content = generate_openai_test_file_content(class_info)
+            generated_content = generate_openai_test_file_content(test_project_path.parent.parent, class_info)
 
         if generated_content and has_invalid_enum_references(generated_content, enum_inventory):
             generated_content = None
