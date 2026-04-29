@@ -121,6 +121,63 @@ def inventory_csharp_enums(repo_dir: Path) -> dict[str, set[str]]:
     return enum_inventory
 
 
+def build_xml_summary(class_info: CSharpClassInfo) -> str:
+    kind_label = class_info.kind.capitalize()
+    return (
+        "/// <summary>\n"
+        f"/// Auto-generated documentation for the {kind_label} <c>{class_info.name}</c>.\n"
+        "/// </summary>"
+    )
+
+
+def build_xml_method_comment(method_name: str) -> str:
+    return (
+        "/// <summary>\n"
+        f"/// Auto-generated documentation for <c>{method_name}</c>.\n"
+        "/// </summary>"
+    )
+
+
+def add_inline_documentation(repo_dir: Path, class_inventory: list[CSharpClassInfo]) -> int:
+    updated_files = 0
+
+    for class_info in class_inventory:
+        source = class_info.file_path.read_text(encoding="utf-8")
+        updated_source = source
+
+        class_pattern = rf"(^\s*)public\s+class\s+{re.escape(class_info.name)}\b"
+        class_match = re.search(class_pattern, updated_source, re.MULTILINE)
+        if class_match:
+            class_indent = class_match.group(1)
+            class_start = class_match.start()
+            prefix = updated_source[:class_start]
+            if "/// <summary>" not in prefix[-300:]:
+                class_comment = "\n".join(f"{class_indent}{line}" for line in build_xml_summary(class_info).splitlines()) + "\n"
+                updated_source = updated_source[:class_start] + class_comment + updated_source[class_start:]
+
+        for method_name in class_info.public_methods:
+            method_pattern = rf"(^\s*)public\s+(?:async\s+)?(?:[\w<>\.\?\[\],]+\s+)+{re.escape(method_name)}\s*\("
+            method_match = re.search(method_pattern, updated_source, re.MULTILINE)
+            if not method_match:
+                continue
+
+            method_indent = method_match.group(1)
+            method_start = method_match.start()
+            prefix = updated_source[:method_start]
+            if "/// <summary>" in prefix[-300:]:
+                continue
+
+            method_comment = "\n".join(f"{method_indent}{line}" for line in build_xml_method_comment(method_name).splitlines()) + "\n"
+            updated_source = updated_source[:method_start] + method_comment + updated_source[method_start:]
+
+        if updated_source != source:
+            class_info.file_path.write_text(updated_source, encoding="utf-8")
+            updated_files += 1
+
+    print(f"Inline documentation updated in {updated_files} files")
+    return updated_files
+
+
 def sanitize_dependency_type(dependency_type: str) -> str:
     return dependency_type.replace("?", "").strip()
 
@@ -826,6 +883,8 @@ def run_generic_dotnet_workflow(repo_dir: Path, config: dict) -> None:
         if last_coverage_percent >= target_coverage:
             if sonar_executed:
                 maybe_run_sonar_end(repo_dir)
+            if config.get("add_docs"):
+                add_inline_documentation(repo_dir, class_inventory)
             print(f"Coverage threshold satisfied: {last_coverage_percent:.2f}% >= {target_coverage:.2f}%")
             print(f"Repository workspace: {repo_dir}")
             return
