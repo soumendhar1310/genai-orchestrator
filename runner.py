@@ -361,6 +361,7 @@ def is_safe_generated_test_content(class_info: CSharpClassInfo, generated_conten
         r"\bAssert\.IsTrue\(",
         r"\bAssert\.IsFalse\(",
         r"\bCollectionAssert\.",
+        r"\.Within\s*\(",
     ]
 
     if class_info.kind in {"controller", "service"}:
