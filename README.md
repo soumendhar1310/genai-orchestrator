@@ -55,6 +55,7 @@ In your repository settings:
 In GitHub repository settings -> Secrets and variables -> Actions, add:
 
 - `SONAR_TOKEN`
+- `OPENAI_API_KEY`
 
 If you later want cross-repo push and PR creation beyond the same repository token, also add:
 - `GH_PAT`
@@ -159,14 +160,24 @@ Right now `runner.py` does:
 - create a working branch
 - optionally run SonarQube
 
-It still needs to be expanded to:
-- analyze codebase
-- generate NUnit tests
-- run coverage
-- add inline documentation
+It now supports:
+- analyze .NET solution and project structure
+- create or reuse an NUnit test project
+- generate NUnit tests using OpenAI when `OPENAI_API_KEY` is available
+- fall back to heuristic generation when OpenAI is unavailable
+- run `dotnet build`
+- run Coverlet in OpenCover format
+- compute overall coverage
+- retry generation and coverage up to 3 times
+- optionally run SonarQube when reachable
 - commit changes
 - push branch
 - create Pull Request
+
+It still needs improvement in:
+- richer generic test quality for arbitrary repositories
+- stronger inline documentation generation
+- better repository-specific namespace/interface resolution
 
 ## Recommended next enhancements
 
@@ -182,14 +193,24 @@ In `runner.py`, implement:
 - `git commit -m "Generated tests, coverage, and docs for issue #<n>"`
 - `git push origin <branch>`
 
-### Add actual AI execution
-Extend `run_placeholder_workflow()` to:
-- inspect source files
-- call your model/provider
-- write generated files
-- run `dotnet test`
-- run Coverlet
-- retry if coverage < 80%
+### OpenAI-based test generation
+The runner now supports OpenAI-driven test generation.
+
+How it works:
+- if `OPENAI_API_KEY` is present, `runner.py` attempts OpenAI-based NUnit test generation first
+- if OpenAI generation fails or no key is present, it falls back to heuristic generation
+- the workflow installs the `openai` Python package during GitHub Actions execution
+
+Optional model override:
+- set `OPENAI_MODEL` as an Actions variable or environment variable
+- default model used by the runner:
+  - `gpt-4.1-mini`
+
+Recommended additional secret/variable setup:
+- Secret:
+  - `OPENAI_API_KEY`
+- Optional variable:
+  - `OPENAI_MODEL`
 
 ### Make repository selection broader
 GitHub Issue Forms dropdown values are static.
@@ -213,6 +234,8 @@ python genai-orchestrator/runner.py parse-issue \
 Example:
 ```bash
 export SONAR_TOKEN=your_token_here
+export OPENAI_API_KEY=your_openai_key_here
+export OPENAI_MODEL=gpt-4.1-mini
 export ISSUE_NUMBER=123
 export ISSUE_URL=https://github.com/your-org/genai-orchestrator/issues/123
 

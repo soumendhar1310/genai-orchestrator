@@ -1,4 +1,5 @@
 import argparse
+import importlib
 import json
 import os
 import re
@@ -6,6 +7,7 @@ import subprocess
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 
 @dataclass
@@ -16,6 +18,7 @@ class CSharpClassInfo:
     constructor_dependencies: list[tuple[str, str]]
     public_methods: list[str]
     kind: str
+    source: str
 
 
 def classify_csharp_class(file_path: Path, class_name: str) -> str:
@@ -81,29 +84,84 @@ def inventory_csharp_classes(repo_dir: Path) -> list[CSharpClassInfo]:
                 constructor_dependencies=parse_constructor_dependencies(class_body, class_name),
                 public_methods=parse_public_methods(class_body),
                 kind=classify_csharp_class(file_path, class_name),
+                source=source,
             )
         )
 
     return class_inventory
 
 
-def generate_generic_test_file_content(class_info: CSharpClassInfo) -> str:
+def sanitize_dependency_type(dependency_type: str) -> str:
+    return dependency_type.replace("?", "").strip()
+
+
+def is_supported_heuristic_kind(class_info: CSharpClassInfo, attempt: int) -> bool:
+    if attempt == 1:
+        return class_info.kind == "repository"
+    if attempt == 2:
+        return class_info.kind in {"repository", "controller"}
+    return class_info.kind in {"repository", "controller", "service", "general"}
+
+
+def build_heuristic_usings(class_info: CSharpClassInfo) -> list[str]:
     using_lines = {
         "using NUnit.Framework;",
         f"using {class_info.namespace};",
     }
 
+    namespace_root = ".".join(class_info.namespace.split(".")[:2]) if "." in class_info.namespace else class_info.namespace
+    namespace_candidates = {
+        namespace_root,
+        f"{namespace_root}.Abstractions",
+        f"{namespace_root}.Interfaces",
+        f"{namespace_root}.Contracts",
+        f"{namespace_root}.Services",
+        f"{namespace_root}.Repositories",
+        f"{namespace_root}.Controllers",
+        "Microsoft.Extensions.Logging",
+    }
+
+    for dependency_type, _ in class_info.constructor_dependencies:
+        clean_type = sanitize_dependency_type(dependency_type)
+        if "ILogger<" in clean_type:
+            using_lines.add("using Microsoft.Extensions.Logging;")
+        if clean_type.startswith("I"):
+            using_lines.update({f"using {candidate};" for candidate in namespace_candidates})
+
+    return sorted(using_lines)
+
+
+def build_constructor_default_expression(dependency_type: str) -> str:
+    clean_type = sanitize_dependency_type(dependency_type)
+    if clean_type in {"string"}:
+        return 'string.Empty'
+    if clean_type in {"int", "long", "short", "byte", "double", "decimal", "float"}:
+        return "0"
+    if clean_type == "bool":
+        return "false"
+    if clean_type.startswith("ILogger<"):
+        return "null!"
+    if clean_type.endswith("[]"):
+        return f"System.Array.Empty<{clean_type[:-2]}>()"
+    return "null!"
+
+
+def generate_heuristic_test_file_content(class_info: CSharpClassInfo) -> str:
+    using_lines = build_heuristic_usings(class_info)
     field_lines: list[str] = []
     setup_lines: list[str] = []
     constructor_args: list[str] = []
 
     for dependency_type, dependency_name in class_info.constructor_dependencies:
-        field_lines.append(f"    private {dependency_type}? _{dependency_name};")
-        setup_lines.append(f"        _{dependency_name} = null;")
-        constructor_args.append(f"_{dependency_name}!")
+        clean_type = sanitize_dependency_type(dependency_type)
+        field_lines.append(f"    private {clean_type} _{dependency_name} = null!;")
+        setup_lines.append(f"        _{dependency_name} = {build_constructor_default_expression(clean_type)};")
+        constructor_args.append(f"_{dependency_name}")
 
-    field_lines.append(f"    private {class_info.name} _sut = null!;")
-    setup_lines.append(f"        _sut = new {class_info.name}({', '.join(constructor_args)});")
+    if constructor_args:
+        setup_lines.append(f"        _sut = new {class_info.name}({', '.join(constructor_args)});")
+    else:
+        setup_lines.append(f"        _sut = new {class_info.name}();")
 
     generated_tests: list[str] = []
     for method_name in (class_info.public_methods[:5] or ["GeneratedPlaceholder"]):
@@ -119,7 +177,7 @@ def generate_generic_test_file_content(class_info: CSharpClassInfo) -> str:
             )
         )
 
-    return f"""{chr(10).join(sorted(using_lines))}
+    return f"""{chr(10).join(using_lines)}
 
 namespace {class_info.namespace}.Tests;
 
@@ -127,6 +185,7 @@ namespace {class_info.namespace}.Tests;
 public class {class_info.name}GeneratedTests
 {{
 {chr(10).join(field_lines)}
+    private {class_info.name} _sut = null!;
 
     [SetUp]
     public void SetUp()
@@ -139,6 +198,78 @@ public class {class_info.name}GeneratedTests
 """
 
 
+def get_openai_client() -> Any | None:
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        return None
+    try:
+        openai_module = importlib.import_module("openai")
+        openai_factory = getattr(openai_module, "OpenAI", None)
+        if openai_factory is None:
+            print("OpenAI SDK is installed but OpenAI client was not found. Falling back to heuristic test generation.")
+            return None
+        return openai_factory(api_key=api_key)
+    except ImportError:
+        print("OpenAI SDK is not installed. Falling back to heuristic test generation.")
+        return None
+
+
+def strip_code_fences(text: str) -> str:
+    stripped = text.strip()
+    stripped = re.sub(r"^```[a-zA-Z0-9]*\n", "", stripped)
+    stripped = re.sub(r"\n```$", "", stripped)
+    return stripped.strip()
+
+
+def generate_openai_test_file_content(class_info: CSharpClassInfo) -> str | None:
+    client = get_openai_client()
+    if client is None:
+        return None
+
+    dependency_summary = ", ".join(
+        f"{dependency_type} {dependency_name}"
+        for dependency_type, dependency_name in class_info.constructor_dependencies
+    ) or "none"
+
+    method_summary = ", ".join(class_info.public_methods[:10]) or "none"
+
+    prompt = f"""
+Generate a compilable C# NUnit test file for the class below.
+
+Requirements:
+- Return only raw C# code, no markdown fences.
+- Use NUnit.
+- Prefer simple deterministic tests.
+- If dependencies are hard to instantiate, use null-forgiving constructor arguments where safe.
+- Include all necessary using statements.
+- Namespace should be {class_info.namespace}.Tests
+- Test class name should be {class_info.name}GeneratedTests
+- Avoid Moq unless absolutely necessary.
+- Ensure code compiles against the source as provided.
+
+Class kind: {class_info.kind}
+Class namespace: {class_info.namespace}
+Class name: {class_info.name}
+Constructor dependencies: {dependency_summary}
+Public methods: {method_summary}
+
+Source:
+{class_info.source}
+""".strip()
+
+    try:
+        response = client.responses.create(
+            model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
+            input=prompt
+        )
+        output_text = getattr(response, "output_text", "") or ""
+        cleaned = strip_code_fences(output_text)
+        return cleaned or None
+    except Exception as exc:
+        print(f"OpenAI generation failed for {class_info.name}: {exc}")
+        return None
+
+
 def generate_tests_for_inventory(test_project_path: Path, class_inventory: list[CSharpClassInfo], attempt: int) -> None:
     generated_dir = test_project_path.parent / "Generated"
     generated_dir.mkdir(parents=True, exist_ok=True)
@@ -146,25 +277,24 @@ def generate_tests_for_inventory(test_project_path: Path, class_inventory: list[
     for existing_file in generated_dir.glob("*.cs"):
         existing_file.unlink()
 
-    preferred_kinds_by_attempt = {
-        1: {"repository"},
-        2: {"repository", "controller"},
-        3: {"repository", "controller", "service", "general"},
-    }
-    supported_kinds = preferred_kinds_by_attempt.get(attempt, {"repository", "controller", "service", "general"})
-
     preferred_order = ["repository", "controller", "service", "general"]
     ordered_inventory = sorted(
         class_inventory,
         key=lambda item: (preferred_order.index(item.kind), item.name)
     )
 
-    selected_classes = [item for item in ordered_inventory if item.kind in supported_kinds]
-    print(f"Attempt {attempt}: generating tests for {len(selected_classes)} classes across kinds {sorted(supported_kinds)}")
+    selected_classes = [item for item in ordered_inventory if is_supported_heuristic_kind(item, attempt)]
+    print(f"Attempt {attempt}: generating tests for {len(selected_classes)} classes across supported heuristic kinds")
+
+    openai_enabled = bool(get_openai_client())
+    print(f"OpenAI generation enabled: {'yes' if openai_enabled else 'no'}")
 
     for class_info in selected_classes:
         target_path = generated_dir / f"{class_info.name}GeneratedTests.cs"
-        target_path.write_text(generate_generic_test_file_content(class_info), encoding="utf-8")
+        generated_content = generate_openai_test_file_content(class_info) if openai_enabled else None
+        if not generated_content:
+            generated_content = generate_heuristic_test_file_content(class_info)
+        target_path.write_text(generated_content, encoding="utf-8")
 
 
 def extract_field(issue_body: str, field_name: str) -> str:
@@ -274,6 +404,7 @@ def ensure_nunit_test_project(repo_dir: Path, repo_info: dict) -> Path:
 
   <ItemGroup>
     <PackageReference Include="coverlet.msbuild" Version="6.0.2" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.2" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.10.0" />
     <PackageReference Include="NUnit" Version="4.1.0" />
     <PackageReference Include="NUnit3TestAdapter" Version="4.5.0" />
