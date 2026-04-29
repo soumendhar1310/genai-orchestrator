@@ -52,7 +52,8 @@ def maybe_run_sonar(repo_dir: Path, config: dict) -> None:
 
     sonar_token = os.getenv("SONAR_TOKEN", "")
     if not sonar_token:
-        raise RuntimeError("SONAR_TOKEN is required when run_sonar is enabled")
+        print("SONAR_TOKEN is not configured. Skipping SonarQube step.")
+        return
 
     command = (
         'export PATH="$PATH:/Users/soumendhar/.dotnet/tools" && '
