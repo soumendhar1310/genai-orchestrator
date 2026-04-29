@@ -139,20 +139,30 @@ public class {class_info.name}GeneratedTests
 """
 
 
-def generate_tests_for_inventory(test_project_path: Path, class_inventory: list[CSharpClassInfo]) -> None:
+def generate_tests_for_inventory(test_project_path: Path, class_inventory: list[CSharpClassInfo], attempt: int) -> None:
     generated_dir = test_project_path.parent / "Generated"
     generated_dir.mkdir(parents=True, exist_ok=True)
 
-    preferred_kinds = ["service", "controller", "repository", "general"]
+    for existing_file in generated_dir.glob("*.cs"):
+        existing_file.unlink()
+
+    preferred_kinds_by_attempt = {
+        1: {"repository"},
+        2: {"repository", "controller"},
+        3: {"repository", "controller", "service", "general"},
+    }
+    supported_kinds = preferred_kinds_by_attempt.get(attempt, {"repository", "controller", "service", "general"})
+
+    preferred_order = ["repository", "controller", "service", "general"]
     ordered_inventory = sorted(
         class_inventory,
-        key=lambda item: (preferred_kinds.index(item.kind), item.name)
+        key=lambda item: (preferred_order.index(item.kind), item.name)
     )
 
-    supported_kinds = {"repository"}
-    for class_info in ordered_inventory:
-        if class_info.kind not in supported_kinds:
-            continue
+    selected_classes = [item for item in ordered_inventory if item.kind in supported_kinds]
+    print(f"Attempt {attempt}: generating tests for {len(selected_classes)} classes across kinds {sorted(supported_kinds)}")
+
+    for class_info in selected_classes:
         target_path = generated_dir / f"{class_info.name}GeneratedTests.cs"
         target_path.write_text(generate_generic_test_file_content(class_info), encoding="utf-8")
 
@@ -359,33 +369,51 @@ def run_generic_dotnet_workflow(repo_dir: Path, config: dict) -> None:
     print(f"Discovered {len(class_inventory)} public classes for candidate test generation")
     solution_path = repo_info["solution_path"]
     test_project_path = ensure_nunit_test_project(repo_dir, repo_info)
-    generate_tests_for_inventory(test_project_path, class_inventory)
     coverage_rel_path = f"{test_project_path.parent.name}/TestResults/coverage.opencover.xml"
 
     run_command(f'dotnet restore "{solution_path}"', cwd=str(repo_dir))
     sonar_executed = maybe_run_sonar_begin(repo_dir, config, coverage_rel_path)
-    run_command(f'dotnet build "{solution_path}" --no-restore', cwd=str(repo_dir))
-    run_command(
-        f'dotnet test "{test_project_path}" '
-        '--no-build '
-        '/p:CollectCoverage=true '
-        '/p:CoverletOutput=TestResults/coverage '
-        '/p:CoverletOutputFormat=opencover',
-        cwd=str(repo_dir)
-    )
 
-    coverage_path = test_project_path.parent / "TestResults" / "coverage.opencover.xml"
-    coverage_percent = compute_coverage_percent(coverage_path)
-    print(f"Computed line coverage: {coverage_percent:.2f}%")
+    last_coverage_percent = 0.0
+    for attempt in range(1, 4):
+        print(f"Starting generation/coverage attempt {attempt} of 3")
+        generate_tests_for_inventory(test_project_path, class_inventory, attempt)
 
-    if coverage_percent < 80.0:
-        raise RuntimeError(f"Coverage threshold not met: {coverage_percent:.2f}% < 80.00%")
+        build_result = run_command_capture(f'dotnet build "{solution_path}" --no-restore', cwd=str(repo_dir))
+        if build_result.returncode != 0:
+            print(f"Build failed on attempt {attempt}")
+            if attempt == 3:
+                raise RuntimeError("Build failed after 3 generation attempts")
+            continue
 
-    if sonar_executed:
-        maybe_run_sonar_end(repo_dir)
+        test_result = run_command_capture(
+            f'dotnet test "{test_project_path}" '
+            '--no-build '
+            '/p:CollectCoverage=true '
+            '/p:CoverletOutput=TestResults/coverage '
+            '/p:CoverletOutputFormat=opencover',
+            cwd=str(repo_dir)
+        )
+        if test_result.returncode != 0:
+            print(f"Test execution failed on attempt {attempt}")
+            if attempt == 3:
+                raise RuntimeError("Test execution failed after 3 generation attempts")
+            continue
 
-    print(f"Coverage threshold satisfied: {coverage_percent:.2f}%")
-    print(f"Repository workspace: {repo_dir}")
+        coverage_path = test_project_path.parent / "TestResults" / "coverage.opencover.xml"
+        last_coverage_percent = compute_coverage_percent(coverage_path)
+        print(f"Computed line coverage after attempt {attempt}: {last_coverage_percent:.2f}%")
+
+        if last_coverage_percent >= 80.0:
+            if sonar_executed:
+                maybe_run_sonar_end(repo_dir)
+            print(f"Coverage threshold satisfied: {last_coverage_percent:.2f}%")
+            print(f"Repository workspace: {repo_dir}")
+            return
+
+        print(f"Coverage below threshold after attempt {attempt}: {last_coverage_percent:.2f}% < 80.00%")
+
+    raise RuntimeError(f"Coverage threshold not met after 3 attempts: {last_coverage_percent:.2f}% < 80.00%")
 
 
 def commit_and_push_changes(repo_dir: Path, branch_name: str, issue_number: str) -> None:
