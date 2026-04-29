@@ -580,9 +580,20 @@ def extract_field(issue_body: str, field_name: str) -> str:
 
 
 def parse_issue(issue_body: str) -> dict:
+    raw_target_coverage = extract_field(issue_body, "Target Test Coverage %") or "30"
+
+    try:
+        target_coverage = float(raw_target_coverage)
+    except ValueError:
+        raise RuntimeError(f"Invalid Target Test Coverage % value: {raw_target_coverage}")
+
+    if target_coverage < 0 or target_coverage > 100:
+        raise RuntimeError(f"Target Test Coverage % must be between 0 and 100: {target_coverage}")
+
     return {
         "repository_url": extract_field(issue_body, "Repository"),
         "branch": extract_field(issue_body, "Target Branch") or "main",
+        "target_coverage": target_coverage,
         "run_sonar": extract_field(issue_body, "Run SonarQube Analysis").lower() == "yes",
         "add_docs": extract_field(issue_body, "Add Inline Documentation").lower() == "yes",
         "notes": extract_field(issue_body, "Additional Notes"),
@@ -781,6 +792,7 @@ def run_generic_dotnet_workflow(repo_dir: Path, config: dict) -> None:
     run_command(f'dotnet restore "{solution_path}"', cwd=str(repo_dir))
     sonar_executed = maybe_run_sonar_begin(repo_dir, config, coverage_rel_path)
 
+    target_coverage = float(config.get("target_coverage", 30.0))
     last_coverage_percent = 0.0
     for attempt in range(1, 4):
         print(f"Starting generation/coverage attempt {attempt} of 3")
@@ -811,16 +823,22 @@ def run_generic_dotnet_workflow(repo_dir: Path, config: dict) -> None:
         last_coverage_percent = compute_coverage_percent(coverage_path)
         print(f"Computed line coverage after attempt {attempt}: {last_coverage_percent:.2f}%")
 
-        if last_coverage_percent >= 80.0:
+        if last_coverage_percent >= target_coverage:
             if sonar_executed:
                 maybe_run_sonar_end(repo_dir)
-            print(f"Coverage threshold satisfied: {last_coverage_percent:.2f}%")
+            print(f"Coverage threshold satisfied: {last_coverage_percent:.2f}% >= {target_coverage:.2f}%")
             print(f"Repository workspace: {repo_dir}")
             return
 
-        print(f"Coverage below threshold after attempt {attempt}: {last_coverage_percent:.2f}% < 80.00%")
+        print(
+            f"Coverage below threshold after attempt {attempt}: "
+            f"{last_coverage_percent:.2f}% < {target_coverage:.2f}%"
+        )
 
-    raise RuntimeError(f"Coverage threshold not met after 3 attempts: {last_coverage_percent:.2f}% < 80.00%")
+    raise RuntimeError(
+        f"Coverage threshold not met after 3 attempts: "
+        f"{last_coverage_percent:.2f}% < {target_coverage:.2f}%"
+    )
 
 
 def commit_and_push_changes(repo_dir: Path, branch_name: str, issue_number: str) -> None:

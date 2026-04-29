@@ -29,6 +29,16 @@ body:
     validations:
       required: true
 
+  - type: input
+    id: target_coverage
+    attributes:
+      label: Target Test Coverage %
+      description: Minimum overall test coverage percentage to enforce for this run
+      placeholder: 30
+      value: 30
+    validations:
+      required: true
+
   - type: dropdown
     id: run_sonar
     attributes:

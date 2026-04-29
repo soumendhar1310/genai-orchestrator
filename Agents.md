@@ -16,6 +16,7 @@ Define an agentic workflow that:
 ## Runtime Inputs
 - `repository_url`
 - `branch`
+- `target_coverage`
 - `run_sonar`
 - `add_docs`
 - `issue_number`
@@ -47,8 +48,9 @@ flowchart TD
 - Validate each step before moving to the next
 - Use runtime inputs instead of hardcoded repository values
 - Prefer deterministic execution for build, test, coverage, Sonar, branch creation, and PR creation
-- Enforce a minimum of 80% overall test coverage
-- If coverage is below 80%, iterate test generation and coverage improvement up to 3 refinement cycles
+- Enforce a runtime-configured minimum overall test coverage target
+- Default the coverage target to 30% when not explicitly provided
+- If coverage is below the configured target, iterate test generation and coverage improvement up to 3 refinement cycles
 - Require user approval through Pull Request review
 
 ---
@@ -91,7 +93,7 @@ flowchart TD
 **Responsibility**
 - Run Coverlet in OpenCover format
 - Generate `coverage.opencover.xml`
-- Evaluate the 80% minimum threshold
+- Evaluate the runtime-configured minimum coverage threshold
 
 **Expected command style**
 - `dotnet test /p:CollectCoverage=true /p:CoverletOutput=TestResults/coverage /p:CoverletOutputFormat=opencover`
@@ -138,7 +140,7 @@ flowchart TD
 3. Analyze codebase
 4. Generate or update NUnit tests
 5. Run Coverlet and create `coverage.opencover.xml`
-6. If coverage is below 80%, retry up to 3 iterations
+6. If coverage is below the configured target, retry up to 3 iterations
 7. Run SonarQube if enabled
 8. Add inline documentation if enabled
 9. Create branch, commit, and push
@@ -151,7 +153,7 @@ The workflow is successful only if:
 - The selected repository is cloned successfully
 - NUnit tests are generated or updated
 - `coverage.opencover.xml` is generated
-- At least 80% coverage is achieved within 3 iterations
+- The configured target coverage is achieved within 3 iterations
 - SonarQube analysis runs when enabled
 - Documentation is added when enabled
 - A Pull Request is created for review
