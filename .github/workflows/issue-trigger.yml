@@ -23,6 +23,11 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Install SonarScanner for .NET
+        run: |
+          dotnet tool install --global dotnet-sonarscanner
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+
       - name: Parse issue form
         id: parse
         env:
