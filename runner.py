@@ -76,73 +76,22 @@ def ensure_sample_project_supported(config: dict) -> None:
 
 
 def seed_sample_project_assets(repo_dir: Path) -> None:
-    tests_dir = repo_dir / "BankingSystem.Tests"
-    tests_dir.mkdir(exist_ok=True)
+    source_root = Path(__file__).resolve().parent.parent / "sample-project"
 
-    (tests_dir / "BankingSystem.Tests.csproj").write_text(
-        """<Project Sdk="Microsoft.NET.Sdk">
-
-  <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
-    <IsPackable>false</IsPackable>
-    <IsTestProject>true</IsTestProject>
-    <Nullable>enable</Nullable>
-    <ImplicitUsings>enable</ImplicitUsings>
-  </PropertyGroup>
-
-  <ItemGroup>
-    <PackageReference Include="coverlet.msbuild" Version="6.0.2" />
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.10.0" />
-    <PackageReference Include="Moq" Version="4.20.70" />
-    <PackageReference Include="NUnit" Version="4.1.0" />
-    <PackageReference Include="NUnit3TestAdapter" Version="4.5.0" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="..\\BankingSystem.Api\\BankingSystem.Api.csproj" />
-    <ProjectReference Include="..\\BankingSystem.Core\\BankingSystem.Core.csproj" />
-  </ItemGroup>
-
-</Project>
-""",
-        encoding="utf-8"
-    )
-
-    (tests_dir / "AccountServiceTests.cs").write_text(
-        """using NUnit.Framework;
-
-namespace BankingSystem.Tests;
-
-[TestFixture]
-public class AccountServiceTests
-{
-    [Test]
-    public void PlaceholderAccountServiceTest()
-    {
-        Assert.That(true, Is.True);
-    }
-}
-""",
-        encoding="utf-8"
-    )
-
-    (tests_dir / "RepositoryAndControllerTests.cs").write_text(
-        """using NUnit.Framework;
-
-namespace BankingSystem.Tests;
-
-[TestFixture]
-public class RepositoryAndControllerTests
-{
-    [Test]
-    public void PlaceholderRepositoryAndControllerTest()
-    {
-        Assert.That(true, Is.True);
-    }
-}
-""",
-        encoding="utf-8"
-    )
+    for relative_path in [
+        Path("BankingSystem.Tests/BankingSystem.Tests.csproj"),
+        Path("BankingSystem.Tests/AccountServiceTests.cs"),
+        Path("BankingSystem.Tests/RepositoryAndControllerTests.cs"),
+        Path("BankingSystem.Core/Services/AccountService.cs"),
+        Path("BankingSystem.Api/Controllers/AccountsController.cs"),
+        Path("BankingSystem.Core/Repositories/InMemoryAccountRepository.cs"),
+        Path("BankingSystem.Core/Repositories/InMemoryHoldRepository.cs"),
+        Path("BankingSystem.Core/Repositories/InMemoryTransactionRepository.cs"),
+    ]:
+        source_path = source_root / relative_path
+        target_path = repo_dir / relative_path
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        target_path.write_text(source_path.read_text(encoding="utf-8"), encoding="utf-8")
 
     sln_path = repo_dir / "BankingSystem.sln"
     sln_text = sln_path.read_text(encoding="utf-8")
@@ -210,6 +159,17 @@ def run_real_sample_project_workflow(repo_dir: Path, config: dict) -> None:
     if not coverage_path.exists():
         raise RuntimeError("coverage.opencover.xml was not generated")
 
+    coverage_text = coverage_path.read_text(encoding="utf-8")
+    sequence_points = [int(value) for value in re.findall(r'numSequencePoints="(\d+)"', coverage_text)]
+    visited_points = [int(value) for value in re.findall(r'visitedSequencePoints="(\d+)"', coverage_text)]
+    total_sequence_points = sum(sequence_points)
+    total_visited_points = sum(visited_points)
+    coverage_percent = (total_visited_points / total_sequence_points * 100) if total_sequence_points else 0.0
+    print(f"Computed line coverage: {coverage_percent:.2f}%")
+
+    if coverage_percent < 80.0:
+        raise RuntimeError(f"Coverage threshold not met: {coverage_percent:.2f}% < 80.00%")
+
     if sonar_executed:
         sonar_token = os.getenv("SONAR_TOKEN", "")
         sonar_end = (
@@ -218,29 +178,7 @@ def run_real_sample_project_workflow(repo_dir: Path, config: dict) -> None:
         )
         run_command(sonar_end, cwd=str(repo_dir))
 
-    summary_path = repo_dir / "agent-run-summary.md"
-    summary_path.write_text(
-        "\n".join(
-            [
-                "# Agent Run Summary",
-                "",
-                f"- Repository: {config['repository_url']}",
-                f"- Branch: {config['branch']}",
-                f"- Run Sonar: {config['run_sonar']}",
-                f"- Add Docs: {config['add_docs']}",
-                f"- Issue Number: {config.get('issue_number', '') or 'local-run'}",
-                f"- Issue URL: {config.get('issue_url', '') or 'not provided'}",
-                "- NUnit tests executed",
-                "- Coverlet OpenCover report generated at BankingSystem.Tests/TestResults/coverage.opencover.xml",
-                f"- SonarQube requested: {'yes' if config['run_sonar'] else 'no'}",
-                f"- SonarQube executed: {'yes' if sonar_executed else 'no'}",
-                "",
-                "This file was generated by the GitHub Issue driven GenAI orchestrator scaffold."
-            ]
-        ),
-        encoding="utf-8"
-    )
-    print(f"Created workflow summary file: {summary_path}")
+    print(f"Coverage threshold satisfied: {coverage_percent:.2f}%")
     print(f"Repository workspace: {repo_dir}")
 
 
@@ -276,7 +214,7 @@ def commit_and_push_changes(repo_dir: Path, branch_name: str, issue_number: str)
     run_command("git status --short", cwd=str(repo_dir))
 
     commit_result = subprocess.run(
-        f'git commit -m "Add agent workflow summary for issue #{issue_number or "local-run"}"',
+        f'git commit -m "Generate tests, coverage, and docs for issue #{issue_number or "local-run"}"',
         shell=True,
         cwd=str(repo_dir)
     )
