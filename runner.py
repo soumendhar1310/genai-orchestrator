@@ -95,6 +95,64 @@ def sanitize_dependency_type(dependency_type: str) -> str:
     return dependency_type.replace("?", "").strip()
 
 
+def normalize_nunit4_assertions(test_code: str) -> str:
+    normalized = test_code
+
+    normalized = re.sub(
+        r"Assert\.AreEqual\((.+?),\s*(.+?)\);",
+        r"Assert.That(\2, Is.EqualTo(\1));",
+        normalized
+    )
+    normalized = re.sub(
+        r"Assert\.IsNotNull\((.+?)\);",
+        r"Assert.That(\1, Is.Not.Null);",
+        normalized
+    )
+    normalized = re.sub(
+        r"Assert\.NotNull\((.+?)\);",
+        r"Assert.That(\1, Is.Not.Null);",
+        normalized
+    )
+    normalized = re.sub(
+        r"Assert\.IsNull\((.+?)\);",
+        r"Assert.That(\1, Is.Null);",
+        normalized
+    )
+    normalized = re.sub(
+        r"Assert\.IsTrue\((.+?)\);",
+        r"Assert.That(\1, Is.True);",
+        normalized
+    )
+    normalized = re.sub(
+        r"Assert\.True\((.+?)\);",
+        r"Assert.That(\1, Is.True);",
+        normalized
+    )
+    normalized = re.sub(
+        r"Assert\.IsFalse\((.+?)\);",
+        r"Assert.That(\1, Is.False);",
+        normalized
+    )
+    normalized = re.sub(
+        r"Assert\.False\((.+?)\);",
+        r"Assert.That(\1, Is.False);",
+        normalized
+    )
+    normalized = re.sub(
+        r"CollectionAssert\.AreEquivalent\((.+?),\s*(.+?)\);",
+        r"Assert.That(\2, Is.EquivalentTo(\1));",
+        normalized
+    )
+    normalized = re.sub(
+        r"CollectionAssert\.Contains\((.+?),\s*(.+?)\);",
+        r"Assert.That(\2, Does.Contain(\1));",
+        normalized
+    )
+
+    normalized = normalized.replace("Assert.That(value, Is.Not.Null);", "Assert.That(value, Is.Not.Null);")
+    return normalized
+
+
 def is_supported_heuristic_kind(class_info: CSharpClassInfo, attempt: int) -> bool:
     if attempt == 1:
         return class_info.kind == "repository"
@@ -234,18 +292,22 @@ def generate_openai_test_file_content(class_info: CSharpClassInfo) -> str | None
     method_summary = ", ".join(class_info.public_methods[:10]) or "none"
 
     prompt = f"""
-Generate a compilable C# NUnit test file for the class below.
+Generate a compilable C# NUnit 4 test file for the class below.
 
 Requirements:
 - Return only raw C# code, no markdown fences.
-- Use NUnit.
+- Use NUnit 4 syntax.
+- Never use legacy assertion APIs such as Assert.AreEqual, Assert.IsNull, Assert.IsNotNull, Assert.IsTrue, Assert.IsFalse, CollectionAssert.
+- Use Assert.That(...) with Is.EqualTo(...), Is.Null, Is.Not.Null, Is.True, Is.False, Is.EquivalentTo(...), Does.Contain(...).
 - Prefer simple deterministic tests.
 - If dependencies are hard to instantiate, use null-forgiving constructor arguments where safe.
 - Include all necessary using statements.
 - Namespace should be {class_info.namespace}.Tests
 - Test class name should be {class_info.name}GeneratedTests
+- Avoid inventing enum members, DTO fields, or methods that are not present in source.
 - Avoid Moq unless absolutely necessary.
 - Ensure code compiles against the source as provided.
+- If behavior is uncertain, generate minimal smoke tests that compile.
 
 Class kind: {class_info.kind}
 Class namespace: {class_info.namespace}
@@ -264,7 +326,9 @@ Source:
         )
         output_text = getattr(response, "output_text", "") or ""
         cleaned = strip_code_fences(output_text)
-        return cleaned or None
+        if not cleaned:
+            return None
+        return normalize_nunit4_assertions(cleaned)
     except Exception as exc:
         print(f"OpenAI generation failed for {class_info.name}: {exc}")
         return None
@@ -287,13 +351,20 @@ def generate_tests_for_inventory(test_project_path: Path, class_inventory: list[
     print(f"Attempt {attempt}: generating tests for {len(selected_classes)} classes across supported heuristic kinds")
 
     openai_enabled = bool(get_openai_client())
+    allow_openai_kinds = {"repository"} if attempt == 1 else {"repository", "controller"} if attempt == 2 else {"repository", "controller", "service"}
     print(f"OpenAI generation enabled: {'yes' if openai_enabled else 'no'}")
 
     for class_info in selected_classes:
         target_path = generated_dir / f"{class_info.name}GeneratedTests.cs"
-        generated_content = generate_openai_test_file_content(class_info) if openai_enabled else None
+        generated_content = None
+
+        if openai_enabled and class_info.kind in allow_openai_kinds:
+            generated_content = generate_openai_test_file_content(class_info)
+
         if not generated_content:
             generated_content = generate_heuristic_test_file_content(class_info)
+
+        generated_content = normalize_nunit4_assertions(generated_content)
         target_path.write_text(generated_content, encoding="utf-8")
 
 
