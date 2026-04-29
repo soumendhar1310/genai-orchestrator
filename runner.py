@@ -279,6 +279,37 @@ def strip_code_fences(text: str) -> str:
     return stripped.strip()
 
 
+def is_safe_generated_test_content(class_info: CSharpClassInfo, generated_content: str) -> bool:
+    blocked_patterns = [
+        r"\bclass\s+Dummy\w*",
+        r"\brecord\s+Dummy\w*",
+        r":\s*I\w+",
+        r"\bAssert\.AreEqual\(",
+        r"\bAssert\.IsNull\(",
+        r"\bAssert\.IsNotNull\(",
+        r"\bAssert\.IsTrue\(",
+        r"\bAssert\.IsFalse\(",
+        r"\bCollectionAssert\.",
+    ]
+
+    if class_info.kind in {"controller", "service"}:
+        blocked_patterns.extend(
+            [
+                r"\bMock<",
+                r"\bnew\s+Mock<",
+                r"\bDummy\w*Service\b",
+                r"\bDummy\w*Repository\b",
+            ]
+        )
+
+    for pattern in blocked_patterns:
+        if re.search(pattern, generated_content):
+            print(f"Rejected OpenAI-generated test for {class_info.name} due to blocked pattern: {pattern}")
+            return False
+
+    return True
+
+
 def generate_openai_test_file_content(class_info: CSharpClassInfo) -> str | None:
     client = get_openai_client()
     if client is None:
@@ -296,18 +327,20 @@ Generate a compilable C# NUnit 4 test file for the class below.
 
 Requirements:
 - Return only raw C# code, no markdown fences.
-- Use NUnit 4 syntax.
-- Never use legacy assertion APIs such as Assert.AreEqual, Assert.IsNull, Assert.IsNotNull, Assert.IsTrue, Assert.IsFalse, CollectionAssert.
+- Use NUnit 4 syntax only.
+- Never use legacy assertion APIs such as Assert.AreEqual, Assert.IsNull, Assert.IsNotNull, Assert.IsTrue, Assert.IsFalse, or CollectionAssert.
 - Use Assert.That(...) with Is.EqualTo(...), Is.Null, Is.Not.Null, Is.True, Is.False, Is.EquivalentTo(...), Does.Contain(...).
 - Prefer simple deterministic tests.
-- If dependencies are hard to instantiate, use null-forgiving constructor arguments where safe.
 - Include all necessary using statements.
 - Namespace should be {class_info.namespace}.Tests
 - Test class name should be {class_info.name}GeneratedTests
-- Avoid inventing enum members, DTO fields, or methods that are not present in source.
-- Avoid Moq unless absolutely necessary.
-- Ensure code compiles against the source as provided.
-- If behavior is uncertain, generate minimal smoke tests that compile.
+- Never invent enum members, property names, methods, interfaces, return types, DTO fields, or helper classes not present in source.
+- Never create dummy implementations such as DummyService, DummyRepository, FakeService, FakeRepository, or any class implementing an interface manually.
+- Never implement interfaces manually unless the exact full interface definition is provided in the prompt.
+- Do not use Moq.
+- If constructor dependencies are difficult to instantiate, use null-forgiving constructor arguments safely and generate only minimal smoke tests.
+- If behavior is uncertain, generate the smallest compiling test class possible.
+- Ensure code compiles against the source exactly as provided.
 
 Class kind: {class_info.kind}
 Class namespace: {class_info.namespace}
@@ -328,7 +361,10 @@ Source:
         cleaned = strip_code_fences(output_text)
         if not cleaned:
             return None
-        return normalize_nunit4_assertions(cleaned)
+        cleaned = normalize_nunit4_assertions(cleaned)
+        if not is_safe_generated_test_content(class_info, cleaned):
+            return None
+        return cleaned
     except Exception as exc:
         print(f"OpenAI generation failed for {class_info.name}: {exc}")
         return None
