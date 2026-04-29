@@ -75,34 +75,100 @@ def ensure_sample_project_supported(config: dict) -> None:
         raise RuntimeError("This implementation currently supports only sample-project.")
 
 
-def ensure_test_project_in_solution(repo_dir: Path) -> None:
+def seed_sample_project_assets(repo_dir: Path) -> None:
+    tests_dir = repo_dir / "BankingSystem.Tests"
+    tests_dir.mkdir(exist_ok=True)
+
+    (tests_dir / "BankingSystem.Tests.csproj").write_text(
+        """<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.msbuild" Version="6.0.2" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.10.0" />
+    <PackageReference Include="Moq" Version="4.20.70" />
+    <PackageReference Include="NUnit" Version="4.1.0" />
+    <PackageReference Include="NUnit3TestAdapter" Version="4.5.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\\BankingSystem.Api\\BankingSystem.Api.csproj" />
+    <ProjectReference Include="..\\BankingSystem.Core\\BankingSystem.Core.csproj" />
+  </ItemGroup>
+
+</Project>
+""",
+        encoding="utf-8"
+    )
+
+    (tests_dir / "AccountServiceTests.cs").write_text(
+        """using NUnit.Framework;
+
+namespace BankingSystem.Tests;
+
+[TestFixture]
+public class AccountServiceTests
+{
+    [Test]
+    public void PlaceholderAccountServiceTest()
+    {
+        Assert.That(true, Is.True);
+    }
+}
+""",
+        encoding="utf-8"
+    )
+
+    (tests_dir / "RepositoryAndControllerTests.cs").write_text(
+        """using NUnit.Framework;
+
+namespace BankingSystem.Tests;
+
+[TestFixture]
+public class RepositoryAndControllerTests
+{
+    [Test]
+    public void PlaceholderRepositoryAndControllerTest()
+    {
+        Assert.That(true, Is.True);
+    }
+}
+""",
+        encoding="utf-8"
+    )
+
     sln_path = repo_dir / "BankingSystem.sln"
     sln_text = sln_path.read_text(encoding="utf-8")
-    if "BankingSystem.Tests\\BankingSystem.Tests.csproj" in sln_text:
-        return
+    if "BankingSystem.Tests\\BankingSystem.Tests.csproj" not in sln_text:
+        addition = (
+            'Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BankingSystem.Tests", '
+            '"BankingSystem.Tests\\BankingSystem.Tests.csproj", "{8A5E778F-16B4-4D74-9A8F-6EF5D9A23F11}"\n'
+            "EndProject\n"
+        )
+        marker = 'Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BankingSystem.Core", "BankingSystem.Core\\BankingSystem.Core.csproj", "{373BEBC8-BA37-4EF0-ADB2-2F8B48BC6759}"\nEndProject\n'
+        sln_text = sln_text.replace(marker, marker + addition)
 
-    addition = (
-        'Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BankingSystem.Tests", '
-        '"BankingSystem.Tests\\BankingSystem.Tests.csproj", "{8A5E778F-16B4-4D74-9A8F-6EF5D9A23F11}"\n'
-        "EndProject\n"
-    )
-    marker = 'Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BankingSystem.Core", "BankingSystem.Core\\BankingSystem.Core.csproj", "{373BEBC8-BA37-4EF0-ADB2-2F8B48BC6759}"\nEndProject\n'
-    sln_text = sln_text.replace(marker, marker + addition)
-
-    config_marker = "\t\t{373BEBC8-BA37-4EF0-ADB2-2F8B48BC6759}.Release|Any CPU.Build.0 = Release|Any CPU\n"
-    config_addition = (
-        "\t\t{8A5E778F-16B4-4D74-9A8F-6EF5D9A23F11}.Debug|Any CPU.ActiveCfg = Debug|Any CPU\n"
-        "\t\t{8A5E778F-16B4-4D74-9A8F-6EF5D9A23F11}.Debug|Any CPU.Build.0 = Debug|Any CPU\n"
-        "\t\t{8A5E778F-16B4-4D74-9A8F-6EF5D9A23F11}.Release|Any CPU.ActiveCfg = Release|Any CPU\n"
-        "\t\t{8A5E778F-16B4-4D74-9A8F-6EF5D9A23F11}.Release|Any CPU.Build.0 = Release|Any CPU\n"
-    )
-    sln_text = sln_text.replace(config_marker, config_marker + config_addition)
-    sln_path.write_text(sln_text, encoding="utf-8")
+        config_marker = "\t\t{373BEBC8-BA37-4EF0-ADB2-2F8B48BC6759}.Release|Any CPU.Build.0 = Release|Any CPU\n"
+        config_addition = (
+            "\t\t{8A5E778F-16B4-4D74-9A8F-6EF5D9A23F11}.Debug|Any CPU.ActiveCfg = Debug|Any CPU\n"
+            "\t\t{8A5E778F-16B4-4D74-9A8F-6EF5D9A23F11}.Debug|Any CPU.Build.0 = Debug|Any CPU\n"
+            "\t\t{8A5E778F-16B4-4D74-9A8F-6EF5D9A23F11}.Release|Any CPU.ActiveCfg = Release|Any CPU\n"
+            "\t\t{8A5E778F-16B4-4D74-9A8F-6EF5D9A23F11}.Release|Any CPU.Build.0 = Release|Any CPU\n"
+        )
+        sln_text = sln_text.replace(config_marker, config_marker + config_addition)
+        sln_path.write_text(sln_text, encoding="utf-8")
 
 
 def run_real_sample_project_workflow(repo_dir: Path, config: dict) -> None:
     ensure_sample_project_supported(config)
-    ensure_test_project_in_solution(repo_dir)
+    seed_sample_project_assets(repo_dir)
 
     print("Agents.md-driven real workflow started")
     print(json.dumps(config, indent=2))
