@@ -587,7 +587,7 @@ def build_openai_context(repo_dir: Path, class_info: CSharpClassInfo) -> str:
     return "\n".join(context_sections)
 
 
-def generate_openai_test_file_content(repo_dir: Path, class_info: CSharpClassInfo) -> str | None:
+def generate_openai_test_file_content(repo_dir: Path, class_info: CSharpClassInfo, attempt: int) -> str | None:
     client = get_openai_client()
     if client is None:
         return None
@@ -617,10 +617,13 @@ Requirements:
 - Never create dummy implementations such as DummyService, DummyRepository, FakeService, FakeRepository, or any class implementing an interface manually.
 - Never implement interfaces manually unless the exact full interface definition is provided in the prompt.
 - Do not use Moq.
-- If constructor dependencies are difficult to instantiate, use null-forgiving constructor arguments safely and generate only minimal smoke tests.
+- If constructor dependencies are difficult to instantiate, use null-forgiving constructor arguments safely.
+- Focus on invoking real public methods where possible, especially async service/controller methods.
+- For refinement attempts, prefer meaningful behavior coverage over smoke tests.
 - If behavior is uncertain, generate the smallest compiling test class possible.
 - Ensure code compiles against the source exactly as provided.
 
+Generation attempt: {attempt}
 Class kind: {class_info.kind}
 Class namespace: {class_info.namespace}
 Class name: {class_info.name}
@@ -670,15 +673,19 @@ def generate_tests_for_inventory(
     print(f"Selected classes: {', '.join(item.name for item in selected_classes[:12])}")
 
     openai_enabled = bool(get_openai_client())
-    allow_openai_kinds = {"repository"} if attempt in {1, 2, 3} else {"repository"}
+    if attempt == 1:
+        allow_openai_kinds = {"repository"}
+    else:
+        allow_openai_kinds = {"repository", "service", "controller"}
     print(f"OpenAI generation enabled: {'yes' if openai_enabled else 'no'}")
+    print(f"OpenAI allowed kinds for attempt {attempt}: {', '.join(sorted(allow_openai_kinds))}")
 
     for class_info in selected_classes:
         target_path = generated_dir / f"{class_info.name}GeneratedTests.cs"
         generated_content = None
 
         if openai_enabled and class_info.kind in allow_openai_kinds:
-            generated_content = generate_openai_test_file_content(test_project_path.parent.parent, class_info)
+            generated_content = generate_openai_test_file_content(test_project_path.parent.parent, class_info, attempt)
 
         if generated_content and has_invalid_enum_references(generated_content, enum_inventory):
             generated_content = None

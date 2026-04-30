@@ -228,6 +228,8 @@ Current refinement behavior:
 - filter out synthetic compiler-generated coverage entries such as async state-machine class names
 - use the coverage summary to steer later attempts toward real low-covered classes
 - prioritize service and controller classes ahead of broader fallback generation in refinement attempts
+- use OpenAI-driven targeted generation for selected service/controller classes in later attempts when `OPENAI_API_KEY` is available
+- retain existing validation guardrails and heuristic fallback when generated output is unsafe or invalid
 - print the lowest-covered areas after a failed coverage attempt
 - use up to 3 total attempts for generation and coverage improvement
 
