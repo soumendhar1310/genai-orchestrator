@@ -485,6 +485,8 @@ def is_safe_generated_test_content(class_info: CSharpClassInfo, generated_conten
         r"\bAssert\.IsFalse\(",
         r"\bCollectionAssert\.",
         r"\.Within\s*\(",
+        r"\bAssert\.That\(\s*[^,\n]+,\s*Is\.(?:True|False)\s*\)",
+        r"\bAssert\.That\(\s*[^,\n]+,\s*Is\.(?:True|False)\s*,",
     ]
 
     if class_info.kind in {"controller", "service"}:
@@ -674,9 +676,9 @@ def generate_tests_for_inventory(
 
     openai_enabled = bool(get_openai_client())
     if attempt == 1:
-        allow_openai_kinds = {"repository"}
+        allow_openai_kinds: set[str] = set()
     else:
-        allow_openai_kinds = {"repository", "service", "controller"}
+        allow_openai_kinds = {"service", "controller"}
     print(f"OpenAI generation enabled: {'yes' if openai_enabled else 'no'}")
     print(f"OpenAI allowed kinds for attempt {attempt}: {', '.join(sorted(allow_openai_kinds))}")
 

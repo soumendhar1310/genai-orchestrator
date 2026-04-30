@@ -90,7 +90,7 @@ flowchart TD
 - Focus on business logic, branches, repository behavior, and controller outcomes
 - Produce an initial candidate test set for downstream validation and refinement
 - Allow later iterations to target specific low-covered classes instead of repeating only broad generation
-- Use LLM-assisted targeted generation for selected service and controller classes when available, with deterministic guardrails and fallback behavior
+- Use LLM-assisted targeted generation only for selected service and controller classes in later refinement attempts when available, with deterministic guardrails and fallback behavior
 
 ---
 
@@ -126,7 +126,7 @@ flowchart TD
 - Prefer targeted regeneration over broad repeated smoke-test generation
 - Preserve successful generated files when possible and focus effort on low-covered areas
 - Prioritize service and controller classes when they dominate the uncovered business logic
-- Permit LLM-assisted refinement for targeted classes while retaining validation, rejection, and heuristic fallback safeguards
+- Permit LLM-assisted refinement only for targeted service/controller classes in later attempts while retaining validation, rejection, and heuristic fallback safeguards
 
 ---
 
